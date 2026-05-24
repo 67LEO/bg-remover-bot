@@ -74,7 +74,7 @@ async function incrementUsage(chatId) {
   const today = new Date().toISOString().split('T')[0];
   await query(
     `INSERT INTO daily_usage (chat_id, date, count) VALUES ($1, $2, 1)
-     ON CONFLICT (chat_id, date) DO UPDATE SET count = count + 1`,
+     ON CONFLICT (chat_id, date) DO UPDATE SET count = daily_usage.count + 1`,
     [chatId, today]
   );
   await query('UPDATE users SET total_uses = total_uses + 1 WHERE chat_id = $1', [chatId]);
