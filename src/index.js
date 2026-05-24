@@ -208,9 +208,17 @@ async function startBot() {
     await bot.telegram.setWebhook(webhookUrl, { drop_pending_updates: true });
     console.log('Webhook set:', webhookUrl);
     server.removeAllListeners('request');
-    server.on('request', (req, res) => {
+    server.on('request', async (req, res) => {
       if (req.url === '/webhook') {
-        bot.webhookCallback('/webhook')(req, res, () => {});
+        const bufs = [];
+        for await (const chunk of req) bufs.push(chunk);
+        try {
+          await bot.handleUpdate(JSON.parse(Buffer.concat(bufs).toString()));
+        } catch (e) {
+          console.error('Webhook error:', e.message);
+        }
+        res.writeHead(200);
+        res.end('OK');
       } else {
         res.writeHead(200);
         res.end('OK');
