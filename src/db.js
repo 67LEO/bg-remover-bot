@@ -1,128 +1,134 @@
-const Database = require('better-sqlite3');
-const path = require('path');
+const { Pool } = require('pg');
 
-const DB_PATH = path.join(__dirname, '..', 'data', 'bot.db');
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  max: 5,
+});
 
-let db;
+async function query(text, params) {
+  const client = await pool.connect();
+  try {
+    return await client.query(text, params);
+  } finally {
+    client.release();
+  }
+}
 
-function init() {
-  const fs = require('fs');
-  const dir = path.dirname(DB_PATH);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-  db = new Database(DB_PATH);
-  db.pragma('journal_mode = WAL');
-
-  db.exec(`
+async function init() {
+  await query(`
     CREATE TABLE IF NOT EXISTS users (
-      chat_id INTEGER PRIMARY KEY,
+      chat_id BIGINT PRIMARY KEY,
       first_name TEXT,
       username TEXT,
-      joined_at TEXT DEFAULT (datetime('now')),
+      joined_at TIMESTAMPTZ DEFAULT NOW(),
       total_uses INTEGER DEFAULT 0,
-      is_premium INTEGER DEFAULT 0,
-      premium_until TEXT
+      is_premium BOOLEAN DEFAULT FALSE,
+      premium_until TIMESTAMPTZ
     );
-
     CREATE TABLE IF NOT EXISTS daily_usage (
-      chat_id INTEGER,
-      date TEXT,
+      chat_id BIGINT,
+      date DATE,
       count INTEGER DEFAULT 0,
       PRIMARY KEY (chat_id, date)
     );
-
     CREATE TABLE IF NOT EXISTS referrals (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      referrer_id INTEGER NOT NULL,
-      referee_id INTEGER NOT NULL UNIQUE,
-      created_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (referrer_id) REFERENCES users(chat_id),
-      FOREIGN KEY (referee_id) REFERENCES users(chat_id)
+      id SERIAL PRIMARY KEY,
+      referrer_id BIGINT NOT NULL,
+      referee_id BIGINT NOT NULL UNIQUE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
-
     CREATE TABLE IF NOT EXISTS images (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      chat_id INTEGER NOT NULL,
+      id SERIAL PRIMARY KEY,
+      chat_id BIGINT NOT NULL,
       original_size INTEGER,
       result_size INTEGER,
-      created_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (chat_id) REFERENCES users(chat_id)
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
+  console.log('Database tables ready');
 }
 
-function upsertUser(chatId, firstName, username) {
-  const stmt = db.prepare(`
-    INSERT INTO users (chat_id, first_name, username) 
-    VALUES (?, ?, ?)
-    ON CONFLICT(chat_id) DO UPDATE SET
-      first_name = excluded.first_name,
-      username = excluded.username
-  `);
-  stmt.run(chatId, firstName, username);
+async function upsertUser(chatId, firstName, username) {
+  await query(
+    `INSERT INTO users (chat_id, first_name, username)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (chat_id) DO UPDATE SET
+       first_name = EXCLUDED.first_name,
+       username = EXCLUDED.username`,
+    [chatId, firstName, username]
+  );
 }
 
-function getUsage(chatId) {
+async function getUsage(chatId) {
   const today = new Date().toISOString().split('T')[0];
-  const row = db.prepare('SELECT count FROM daily_usage WHERE chat_id = ? AND date = ?').get(chatId, today);
-  return row?.count || 0;
+  const r = await query('SELECT count FROM daily_usage WHERE chat_id = $1 AND date = $2', [chatId, today]);
+  return r.rows[0]?.count || 0;
 }
 
-function incrementUsage(chatId) {
+async function incrementUsage(chatId) {
   const today = new Date().toISOString().split('T')[0];
-  db.prepare(`
-    INSERT INTO daily_usage (chat_id, date, count) VALUES (?, ?, 1)
-    ON CONFLICT(chat_id, date) DO UPDATE SET count = count + 1
-  `).run(chatId, today);
-  db.prepare('UPDATE users SET total_uses = total_uses + 1 WHERE chat_id = ?').run(chatId);
+  await query(
+    `INSERT INTO daily_usage (chat_id, date, count) VALUES ($1, $2, 1)
+     ON CONFLICT (chat_id, date) DO UPDATE SET count = daily_usage.count + 1`,
+    [chatId, today]
+  );
+  await query('UPDATE users SET total_uses = total_uses + 1 WHERE chat_id = $1', [chatId]);
 }
 
-function logImage(chatId, originalSize, resultSize) {
-  db.prepare('INSERT INTO images (chat_id, original_size, result_size) VALUES (?, ?, ?)').run(chatId, originalSize, resultSize);
+async function logImage(chatId, originalSize, resultSize) {
+  await query(
+    'INSERT INTO images (chat_id, original_size, result_size) VALUES ($1, $2, $3)',
+    [chatId, originalSize, resultSize]
+  );
 }
 
-function addReferral(referrerId, refereeId) {
-  db.prepare('INSERT OR IGNORE INTO referrals (referrer_id, referee_id) VALUES (?, ?)').run(referrerId, refereeId);
+async function addReferral(referrerId, refereeId) {
+  await query(
+    'INSERT INTO referrals (referrer_id, referee_id) VALUES ($1, $2) ON CONFLICT (referee_id) DO NOTHING',
+    [referrerId, refereeId]
+  );
 }
 
-function getReferralCount(chatId) {
-  const row = db.prepare('SELECT COUNT(*) as count FROM referrals WHERE referrer_id = ?').get(chatId);
-  return row?.count || 0;
+async function getReferralCount(chatId) {
+  const r = await query('SELECT COUNT(*) as count FROM referrals WHERE referrer_id = $1', [chatId]);
+  return parseInt(r.rows[0]?.count || '0');
 }
 
-function getUserStats(chatId) {
-  const user = db.prepare('SELECT * FROM users WHERE chat_id = ?').get(chatId);
+async function getUserStats(chatId) {
+  const r = await query('SELECT * FROM users WHERE chat_id = $1', [chatId]);
+  const user = r.rows[0];
   if (!user) return null;
-  const dailyUsed = getUsage(chatId);
+  const dailyUsed = await getUsage(chatId);
   return {
     totalUses: user.total_uses,
     dailyUsed,
     dailyRemaining: Math.max(0, user.is_premium ? Infinity : require('./config').FREE_LIMIT_DAILY - dailyUsed),
     isPremium: !!user.is_premium,
-    referrals: getReferralCount(chatId),
+    referrals: await getReferralCount(chatId),
     joinedAt: user.joined_at,
   };
 }
 
-function getAllUsers() {
-  return db.prepare('SELECT chat_id, first_name, username, total_uses, is_premium, joined_at FROM users ORDER BY total_uses DESC').all();
+async function getAllUsers() {
+  const r = await query('SELECT chat_id, first_name, username, total_uses, is_premium, joined_at FROM users ORDER BY total_uses DESC');
+  return r.rows;
 }
 
-function getTotalStats() {
-  const users = db.prepare('SELECT COUNT(*) as count FROM users').get();
-  const images = db.prepare('SELECT COUNT(*) as count FROM images').get();
-  const todayImages = db.prepare("SELECT COUNT(*) as count FROM images WHERE date(created_at) = date('now')").get();
+async function getTotalStats() {
+  const users = await query('SELECT COUNT(*) as count FROM users');
+  const images = await query('SELECT COUNT(*) as count FROM images');
+  const todayImages = await query("SELECT COUNT(*) as count FROM images WHERE created_at::date = CURRENT_DATE");
   return {
-    totalUsers: users.count,
-    totalImages: images.count,
-    todayImages: todayImages.count,
+    totalUsers: parseInt(users.rows[0]?.count || '0'),
+    totalImages: parseInt(images.rows[0]?.count || '0'),
+    todayImages: parseInt(todayImages.rows[0]?.count || '0'),
   };
 }
 
-function getDailyActiveCount() {
-  const today = new Date().toISOString().split('T')[0];
-  const row = db.prepare('SELECT COUNT(DISTINCT chat_id) as c FROM daily_usage WHERE date=?').get(today);
-  return row?.c || 0;
+async function getDailyActiveCount() {
+  const r = await query("SELECT COUNT(DISTINCT chat_id) as c FROM daily_usage WHERE date = CURRENT_DATE");
+  return parseInt(r.rows[0]?.c || '0');
 }
 
 init();
