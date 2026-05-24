@@ -104,8 +104,9 @@ bot.command('admin', async (ctx) => {
   await ctx.replyWithMarkdown(msg);
 });
 
+let lastError = null;
+
 bot.command('debug', async (ctx) => {
-  if (ctx.chat.id !== 961262211) return ctx.reply('Unauthorized');
   const vars = [
     ['BOT_TOKEN', !!config.BOT_TOKEN],
     ['FIREBASE_API_KEY', !!config.FIREBASE_API_KEY],
@@ -113,9 +114,10 @@ bot.command('debug', async (ctx) => {
     ['MASK_API_URL', !!config.MASK_API_URL],
     ['STARTUP_API_URL', !!config.STARTUP_API_URL],
   ];
-  let msg = '🔧 *Debug Info*\n\n';
-  vars.forEach(([k, v]) => msg += `${k}: ${v ? '✅ Set' : '❌ MISSING'}\n`);
+  let msg = '🔧 *Bot Status*\n\n';
+  vars.forEach(([k, v]) => msg += `${k}: ${v ? '✅' : '❌'}\n`);
   msg += `\nNode: ${process.version}`;
+  if (lastError) msg += `\n\n⚠️ *Last Error:*\n\`${lastError.substring(0, 200)}\``;
   await ctx.replyWithMarkdown(msg);
 });
 
@@ -162,9 +164,9 @@ bot.on('photo', async (ctx) => {
 
     db.incrementUsage(chatId);
   } catch (err) {
+    lastError = err.message;
     console.error('=== ERROR ===');
     console.error('Message:', err.message);
-    console.error('Stack:', err.stack?.split('\n').slice(0, 4).join('\n'));
     await ctx.reply('❌ Error: ' + err.message.substring(0, 100));
   } finally {
     await ctx.deleteMessage(processingMsg.message_id).catch(() => {});
