@@ -138,7 +138,7 @@ bot.command('password', async (ctx) => {
 
     if (fails >= 3) {
       passwordFails.delete(chatId);
-      await ctx.replyWithPhoto(MEME_URL, { caption: '3 baar galat password daala? 📸💀' });
+      await ctx.replyWithPhoto(MEME_URL, { caption: 'Bhai sahi password daal warna bot block kar dunga 😤' });
     } else {
       await ctx.reply(`❌ Wrong password (${fails}/3 attempts)`);
     }
