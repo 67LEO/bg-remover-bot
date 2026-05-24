@@ -25,11 +25,11 @@ function parseReferral(ctx) {
 
 bot.start(async (ctx) => {
   const { id: chatId, first_name: name, username } = ctx.chat;
-  db.upsertUser(chatId, name, username);
+  await db.upsertUser(chatId, name, username);
 
   const referrerId = parseReferral(ctx);
   if (referrerId) {
-    db.addReferral(referrerId, chatId);
+    await db.addReferral(referrerId, chatId);
     try {
       await ctx.telegram.sendMessage(referrerId, 'Someone joined using your referral link! You earned bonus uses!');
     } catch {}
@@ -45,7 +45,7 @@ bot.start(async (ctx) => {
 });
 
 bot.help(async (ctx) => {
-  const stats = db.getUserStats(ctx.chat.id);
+  const stats = await db.getUserStats(ctx.chat.id);
   await ctx.replyWithMarkdown(
     '📖 *How to use*\n\n' +
     '1️⃣ Send any photo (JPG/PNG/WEBP)\n' +
@@ -60,7 +60,7 @@ bot.help(async (ctx) => {
 bot.command('share', async (ctx) => {
   const chatId = ctx.chat.id;
   const botUsername = ctx.botInfo?.username || 'BgRemoverBot';
-  const count = db.getReferralCount(chatId);
+  const count = await db.getReferralCount(chatId);
   await ctx.replyWithMarkdown(
     '🤝 *Share & Earn Unlimited Usage!*\n\n' +
     `You've referred *${count} friends* so far!\n\n` +
@@ -75,7 +75,7 @@ bot.command('share', async (ctx) => {
 });
 
 bot.command('stats', async (ctx) => {
-  const stats = db.getUserStats(ctx.chat.id);
+  const stats = await db.getUserStats(ctx.chat.id);
   if (!stats) return ctx.reply('No data yet. Send a photo to get started!');
 
   await ctx.replyWithMarkdown(
@@ -167,13 +167,13 @@ bot.command('debug', async (ctx) => {
 bot.on('photo', async (ctx) => {
   const chatId = ctx.chat.id;
   const { first_name: name, username } = ctx.chat;
-  db.upsertUser(chatId, name, username);
+  await db.upsertUser(chatId, name, username);
 
-  const userStats = db.getUserStats(chatId);
+  const userStats = await db.getUserStats(chatId);
   const dailyUsed = userStats?.dailyUsed ?? 0;
 
   if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
-    return ctx.replyWithMarkdown(
+    return await ctx.replyWithMarkdown(
       `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
       '🔹 Type /share to get unlimited\n🔹 Or wait until tomorrow'
     );
@@ -193,7 +193,7 @@ bot.on('photo', async (ctx) => {
     const maskBuffer = await getMask(imageBuffer);
     const resultBuffer = await applyMask(imageBuffer, maskBuffer);
 
-    db.logImage(chatId, imageBuffer.length, resultBuffer.length);
+    await db.logImage(chatId, imageBuffer.length, resultBuffer.length);
 
     await ctx.replyWithDocument(
       { source: Buffer.from(resultBuffer), filename: 'result.png' },
