@@ -90,6 +90,8 @@ bot.command('stats', async (ctx) => {
 });
 
 const adminAuth = new Set();
+const passwordFails = new Map();
+const MEME_URL = 'https://res.cloudinary.com/dm2hjn5wp/image/upload/q_auto/f_auto/v1779618463/memme_uq0haa.jpg';
 
 bot.command('admin', async (ctx) => {
   const chatId = ctx.chat.id;
@@ -122,13 +124,24 @@ bot.command('admin', async (ctx) => {
 });
 
 bot.command('password', async (ctx) => {
+  const chatId = ctx.chat.id;
   const parts = ctx.message.text.split(' ');
   if (parts.length < 2) return ctx.reply('Usage: /password YOUR_PASSWORD');
+
   if (parts.slice(1).join(' ') === config.ADMIN_PASSWORD) {
-    adminAuth.add(ctx.chat.id);
+    adminAuth.add(chatId);
+    passwordFails.delete(chatId);
     await ctx.reply('✅ Access granted! Now send /admin to see analytics.');
   } else {
-    await ctx.reply('❌ Wrong password');
+    const fails = (passwordFails.get(chatId) || 0) + 1;
+    passwordFails.set(chatId, fails);
+
+    if (fails >= 3) {
+      passwordFails.delete(chatId);
+      await ctx.replyWithPhoto(MEME_URL, { caption: '3 baar galat password daala? 📸💀' });
+    } else {
+      await ctx.reply(`❌ Wrong password (${fails}/3 attempts)`);
+    }
   }
 });
 
