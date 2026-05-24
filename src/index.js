@@ -204,7 +204,7 @@ bot.on('photo', async (ctx) => {
       }
     );
 
-    db.incrementUsage(chatId);
+    await db.incrementUsage(chatId);
   } catch (err) {
     lastError = err.message;
     console.error('=== ERROR ===');
