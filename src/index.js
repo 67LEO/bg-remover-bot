@@ -89,12 +89,22 @@ bot.command('stats', async (ctx) => {
   );
 });
 
+const adminAuth = new Set();
+
 bot.command('admin', async (ctx) => {
-  const admins = [961262211, 1859416028];
-  if (!admins.includes(ctx.chat.id)) return ctx.reply('Unauthorized');
-  const total = db.getTotalStats();
-  const users = db.getAllUsers();
-  const dailyActive = db.getDailyActiveCount();
+  const chatId = ctx.chat.id;
+  const password = config.ADMIN_PASSWORD;
+
+  if (!password) return ctx.reply('Admin password not configured');
+
+  if (!adminAuth.has(chatId)) {
+    adminAuth.add(chatId);
+    return ctx.reply('🔑 Send /password YOUR_PASSWORD to access admin panel');
+  }
+
+  const total = await db.getTotalStats();
+  const users = await db.getAllUsers();
+  const dailyActive = await db.getDailyActiveCount();
 
   let msg = '📊 *Bot Analytics*\n\n';
   msg += `👥 Total users: *${total.totalUsers}*\n`;
@@ -109,6 +119,17 @@ bot.command('admin', async (ctx) => {
     msg += `${i + 1}. ${name} — ${u.total_uses} images${u.is_premium ? ' 👑' : ''}\n`;
   });
   await ctx.replyWithMarkdown(msg);
+});
+
+bot.command('password', async (ctx) => {
+  const parts = ctx.message.text.split(' ');
+  if (parts.length < 2) return ctx.reply('Usage: /password YOUR_PASSWORD');
+  if (parts.slice(1).join(' ') === config.ADMIN_PASSWORD) {
+    adminAuth.add(ctx.chat.id);
+    await ctx.reply('✅ Access granted! Now send /admin to see analytics.');
+  } else {
+    await ctx.reply('❌ Wrong password');
+  }
 });
 
 let lastError = null;

@@ -35,7 +35,7 @@ module.exports = {
   TELEMETRY_HEADER: process.env.TELEMETRY_HEADER || 'false',
   TZ_HEADER: process.env.TZ_HEADER || 'UTC',
 
-  ADMIN_CHAT_ID: parseInt(process.env.ADMIN_CHAT_ID || '0'),
+  ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
 
   FREE_LIMIT_DAILY: 3,
   REFERRAL_BONUS: 5,
