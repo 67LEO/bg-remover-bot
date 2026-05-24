@@ -198,8 +198,14 @@ http.createServer((req, res) => {
   console.log(`Server on port ${PORT}`);
 });
 
-bot.launch().then(() => {
+bot.telegram.deleteWebhook({ drop_pending_updates: true }).then(() => {
+  console.log('Webhook cleared');
+  return bot.launch();
+}).then(() => {
   console.log('Bot started');
+}).catch(err => {
+  console.error('Launch failed:', err.message);
+  process.exit(1);
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
