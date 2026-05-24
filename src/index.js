@@ -106,19 +106,21 @@ bot.command('admin', async (ctx) => {
 
 let lastError = null;
 
+function escMd(t) {
+  return t.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+}
+
 bot.command('debug', async (ctx) => {
   const vars = [
     ['BOT_TOKEN', !!config.BOT_TOKEN],
     ['FIREBASE_API_KEY', !!config.FIREBASE_API_KEY],
     ['FIREBASE_PROJECT_ID', !!config.FIREBASE_PROJECT_ID],
-    ['MASK_API_URL', !!config.MASK_API_URL],
-    ['STARTUP_API_URL', !!config.STARTUP_API_URL],
   ];
-  let msg = '🔧 *Bot Status*\n\n';
-  vars.forEach(([k, v]) => msg += `${k}: ${v ? '✅' : '❌'}\n`);
-  msg += `\nNode: ${process.version}`;
-  if (lastError) msg += `\n\n⚠️ *Last Error:*\n\`${lastError.substring(0, 200)}\``;
-  await ctx.replyWithMarkdown(msg);
+  let msg = '*Bot Status*\n';
+  vars.forEach(([k, v]) => msg += `${escMd(k)}: ${v ? '✅' : '❌'}\n`);
+  msg += `\nNode: ${escMd(process.version)}`;
+  if (lastError) msg += `\n\nLast error:\n${escMd(lastError.substring(0, 200))}`;
+  await ctx.reply(msg, { parse_mode: 'MarkdownV2' });
 });
 
 bot.on('photo', async (ctx) => {
@@ -189,22 +191,40 @@ bot.on('document', async (ctx) => {
 
 const http = require('http');
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => {
-  if (req.url === '/') {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('OK');
-  }
-}).listen(PORT, () => {
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('OK');
+});
+server.listen(PORT, () => {
   console.log(`Server on port ${PORT}`);
 });
 
-bot.telegram.deleteWebhook({ drop_pending_updates: true }).then(() => {
-  console.log('Webhook cleared');
-  return bot.launch();
-}).then(() => {
+async function startBot() {
+  const webhookUrl = process.env.RENDER_EXTERNAL_URL
+    ? process.env.RENDER_EXTERNAL_URL + '/webhook'
+    : null;
+
+  if (webhookUrl) {
+    await bot.telegram.setWebhook(webhookUrl, { drop_pending_updates: true });
+    console.log('Webhook set:', webhookUrl);
+    server.removeAllListeners('request');
+    server.on('request', (req, res) => {
+      if (req.url === '/webhook') {
+        bot.webhookCallback('/webhook')(req, res, () => {});
+      } else {
+        res.writeHead(200);
+        res.end('OK');
+      }
+    });
+  } else {
+    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+    await bot.launch();
+  }
   console.log('Bot started');
-}).catch(err => {
-  console.error('Launch failed:', err.message);
+}
+
+startBot().catch(err => {
+  console.error('Failed:', err.message);
   process.exit(1);
 });
 
