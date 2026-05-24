@@ -1,0 +1,40 @@
+require('dotenv').config();
+
+const KEY = Buffer.from('bg@2026!secret#key', 'utf8');
+
+function d(s) {
+  const b = Buffer.from(s, 'base64');
+  const r = Buffer.alloc(b.length);
+  for (let i = 0; i < b.length; i++) r[i] = b[i] ^ KEY[i % KEY.length];
+  return r.toString('utf8');
+}
+
+const E = {
+  MASK: process.env.MASK_API_URL,
+  STARTUP: process.env.STARTUP_API_URL,
+};
+
+module.exports = {
+  BOT_TOKEN: process.env.BOT_TOKEN,
+  FIREBASE_API_KEY: process.env.FIREBASE_API_KEY,
+  FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID,
+  FIREBASE_SIGNUP_URL: 'https://identitytoolkit.googleapis.com/v1/accounts:signUp',
+  FIREBASE_TOKEN_URL: 'https://securetoken.googleapis.com/v1/token',
+
+  get MASK_API_URL() {
+    return E.MASK || d('ChM0QkMIGQ4AAAQfABpXChEQDQltW15UU1MWCwAXSwRLBBEWEAgvXx5RWUxcE1JdCBVQAA==');
+  },
+  get STARTUP_API_URL() {
+    return E.STARTUP || d('ChM0QkMIGQ4SFQpcFRxMHwoLDQgtHFNdWw4FVEwTFQQOGBEYEBM1Qh8=');
+  },
+
+  PLATFORM_HEADER: process.env.PLATFORM_HEADER || 'android',
+  APP_VER_HEADER: process.env.APP_VER_HEADER || '2026.19.02 (2395)',
+  ENTITLEMENT_HEADER: process.env.ENTITLEMENT_HEADER || 'none',
+  LANG_HEADER: process.env.LANG_HEADER || 'en-GB',
+  TELEMETRY_HEADER: process.env.TELEMETRY_HEADER || 'false',
+  TZ_HEADER: process.env.TZ_HEADER || 'UTC',
+
+  FREE_LIMIT_DAILY: 3,
+  REFERRAL_BONUS: 5,
+};

@@ -1,0 +1,17 @@
+{
+  "name": "ai-bg-remover-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot for AI background removal",
+  "main": "src/index.js",
+  "engines": { "node": ">=18.0.0" },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.10.0",
+    "dotenv": "^16.4.0",
+    "sharp": "^0.33.0",
+    "telegraf": "^4.16.0"
+  }
+}
