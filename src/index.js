@@ -104,6 +104,21 @@ bot.command('admin', async (ctx) => {
   await ctx.replyWithMarkdown(msg);
 });
 
+bot.command('debug', async (ctx) => {
+  if (ctx.chat.id !== 961262211) return ctx.reply('Unauthorized');
+  const vars = [
+    ['BOT_TOKEN', !!config.BOT_TOKEN],
+    ['FIREBASE_API_KEY', !!config.FIREBASE_API_KEY],
+    ['FIREBASE_PROJECT_ID', !!config.FIREBASE_PROJECT_ID],
+    ['MASK_API_URL', !!config.MASK_API_URL],
+    ['STARTUP_API_URL', !!config.STARTUP_API_URL],
+  ];
+  let msg = '🔧 *Debug Info*\n\n';
+  vars.forEach(([k, v]) => msg += `${k}: ${v ? '✅ Set' : '❌ MISSING'}\n`);
+  msg += `\nNode: ${process.version}`;
+  await ctx.replyWithMarkdown(msg);
+});
+
 bot.on('photo', async (ctx) => {
   const chatId = ctx.chat.id;
   const { first_name: name, username } = ctx.chat;
@@ -147,8 +162,10 @@ bot.on('photo', async (ctx) => {
 
     db.incrementUsage(chatId);
   } catch (err) {
-    console.error('Error:', err.message);
-    await ctx.reply('❌ Sorry, something went wrong. Try again with a different photo.');
+    console.error('=== ERROR ===');
+    console.error('Message:', err.message);
+    console.error('Stack:', err.stack?.split('\n').slice(0, 4).join('\n'));
+    await ctx.reply('❌ Error: ' + err.message.substring(0, 100));
   } finally {
     await ctx.deleteMessage(processingMsg.message_id).catch(() => {});
     const genDir = require('path').join(__dirname, '..', 'generated');
