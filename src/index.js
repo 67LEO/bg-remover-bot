@@ -150,13 +150,12 @@ bot.on('photo', async (ctx) => {
     const imageBuffer = Buffer.from(await response.arrayBuffer());
 
     const maskBuffer = await getMask(imageBuffer);
-    const outPath = await applyMask(imageBuffer, maskBuffer);
+    const resultBuffer = await applyMask(imageBuffer, maskBuffer);
 
-    const resultBuf = fs.readFileSync(outPath);
-    db.logImage(chatId, imageBuffer.length, resultBuf.length);
+    db.logImage(chatId, imageBuffer.length, resultBuffer.length);
 
     await ctx.replyWithPhoto(
-      { source: fs.createReadStream(outPath) },
+      { source: Buffer.from(resultBuffer) },
       {
         caption: userStats?.isPremium
           ? '✨ Background removed! (Unlimited)\n\nShare & earn rewards! /share'
@@ -172,12 +171,6 @@ bot.on('photo', async (ctx) => {
     await ctx.reply('❌ Error: ' + err.message.substring(0, 100));
   } finally {
     await ctx.deleteMessage(processingMsg.message_id).catch(() => {});
-    const genDir = require('path').join(__dirname, '..', 'generated');
-    try {
-      fs.readdirSync(genDir).forEach(f => {
-        try { fs.unlinkSync(require('path').join(genDir, f)); } catch {}
-      });
-    } catch {}
   }
 });
 
