@@ -154,8 +154,8 @@ bot.on('photo', async (ctx) => {
 
     db.logImage(chatId, imageBuffer.length, resultBuffer.length);
 
-    await ctx.replyWithPhoto(
-      { source: Buffer.from(resultBuffer) },
+    await ctx.replyWithDocument(
+      { source: Buffer.from(resultBuffer), filename: 'result.png' },
       {
         caption: userStats?.isPremium
           ? '✨ Background removed! (Unlimited)\n\nShare & earn rewards! /share'
