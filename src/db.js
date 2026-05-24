@@ -119,6 +119,12 @@ function getTotalStats() {
   };
 }
 
+function getDailyActiveCount() {
+  const today = new Date().toISOString().split('T')[0];
+  const row = db.prepare('SELECT COUNT(DISTINCT chat_id) as c FROM daily_usage WHERE date=?').get(today);
+  return row?.c || 0;
+}
+
 init();
 
-module.exports = { upsertUser, getUsage, incrementUsage, logImage, addReferral, getReferralCount, getUserStats, getAllUsers, getTotalStats };
+module.exports = { upsertUser, getUsage, incrementUsage, logImage, addReferral, getReferralCount, getUserStats, getAllUsers, getTotalStats, getDailyActiveCount };

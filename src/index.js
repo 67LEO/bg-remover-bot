@@ -90,16 +90,23 @@ bot.command('stats', async (ctx) => {
 });
 
 bot.command('admin', async (ctx) => {
-  if (ctx.chat.id !== 961262211) return ctx.reply('Unauthorized');
+  const admins = [961262211, 1859416028];
+  if (!admins.includes(ctx.chat.id)) return ctx.reply('Unauthorized');
   const total = db.getTotalStats();
   const users = db.getAllUsers();
-  let msg = '📊 *Bot Statistics*\n\n';
+  const dailyActive = db.getDailyActiveCount();
+
+  let msg = '📊 *Bot Analytics*\n\n';
   msg += `👥 Total users: *${total.totalUsers}*\n`;
   msg += `🖼️ Total images: *${total.totalImages}*\n`;
-  msg += `📸 Today: *${total.todayImages}*\n\n`;
-  msg += '*Top Users:*\n';
-  users.slice(0, 10).forEach((u, i) => {
-    msg += `${i + 1}. ${u.first_name || '?'} — ${u.total_uses} images${u.is_premium ? ' 👑' : ''}\n`;
+  msg += `📸 Today active: *${dailyActive}*\n`;
+  msg += `📸 Today images: *${total.todayImages}*\n\n`;
+
+  const top = users.slice(0, 5);
+  msg += '*Top 5 Users:*\n';
+  top.forEach((u, i) => {
+    const name = u.first_name || u.username || 'User';
+    msg += `${i + 1}. ${name} — ${u.total_uses} images${u.is_premium ? ' 👑' : ''}\n`;
   });
   await ctx.replyWithMarkdown(msg);
 });
