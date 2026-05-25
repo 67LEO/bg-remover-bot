@@ -46,6 +46,13 @@ module.exports = {
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
   ADMIN_CHAT_ID: process.env.ADMIN_CHAT_ID ? Number(process.env.ADMIN_CHAT_ID) : null,
 
+  UPI_ID: process.env.UPI_ID || 'abc@fam',
+  UPI_NAME: process.env.UPI_NAME || 'Mohit',
+  PREMIUM_PLANS: {
+    monthly: { label: 'Monthly', price: 49, days: 30 },
+    yearly: { label: 'Yearly', price: 499, days: 365 },
+  },
+
   FREE_LIMIT_DAILY: 10,
   REFERRAL_BONUS: 5,
 };

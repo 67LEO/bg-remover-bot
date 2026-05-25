@@ -1,4 +1,4 @@
-const { Telegraf } = require('telegraf');
+const { Telegraf, Markup } = require('telegraf');
 const config = require('./config');
 const { getMask, getUpscale, generateImage } = require('./processor');
 const { applyMask } = require('./image');
@@ -256,34 +256,135 @@ bot.command('close', async (ctx) => {
   } catch {}
 });
 
-bot.command('activate', async (ctx) => {
+function generateOrderRef() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let ref = 'BG-';
+  for (let i = 0; i < 5; i++) ref += chars[Math.floor(Math.random() * chars.length)];
+  return ref;
+}
+
+bot.command('premium', async (ctx) => {
+  const plans = config.PREMIUM_PLANS;
+  let msg = '🎯 *Premium Plans*\n\nUnlimited background removal, upscale & AI generation!\n';
+  msg += '\n📆 *Monthly* — ₹' + plans.monthly.price + ' (30 days)\n';
+  msg += '🎉 *Yearly* — ₹' + plans.yearly.price + ' (365 days)\n\n';
+  msg += 'Select a plan below 👇';
+
+  await ctx.replyWithMarkdown(msg, Markup.inlineKeyboard([
+    [Markup.button.callback('📆 Monthly — ₹' + plans.monthly.price, 'buy_monthly')],
+    [Markup.button.callback('🎉 Yearly — ₹' + plans.yearly.price, 'buy_yearly')],
+  ]));
+});
+
+bot.action('buy_monthly', async (ctx) => {
+  await handleBuyPlan(ctx, 'monthly');
+});
+
+bot.action('buy_yearly', async (ctx) => {
+  await handleBuyPlan(ctx, 'yearly');
+});
+
+async function handleBuyPlan(ctx, plan) {
+  const chatId = ctx.chat.id;
+  const { first_name: name, username } = ctx.chat;
+  await db.upsertUser(chatId, name, username);
+
+  const planInfo = config.PREMIUM_PLANS[plan];
+  const orderRef = generateOrderRef();
+
+  try {
+    await db.createPaymentOrder(orderRef, chatId, plan, planInfo.price);
+    pendingPayment.set(chatId, { orderRef, plan });
+
+    await ctx.editMessageText(
+      `✅ *Order Created!*\n\n` +
+      `💰 Plan: *${planInfo.label}* — ₹${planInfo.price}\n` +
+      `🔖 Reference: \`${orderRef}\`\n\n` +
+      `📲 Pay to UPI:\n\`${config.UPI_ID}\`\n👤 ${config.UPI_NAME}\n\n` +
+      `📸 *After payment, send the screenshot here*`,
+      { parse_mode: 'Markdown' }
+    );
+
+    if (config.ADMIN_CHAT_ID) {
+      const displayName = name || username || `User ${chatId}`;
+      await ctx.telegram.sendMessage(
+        config.ADMIN_CHAT_ID,
+        `🆕 *New Payment Order*\n\n👤 ${displayName}\n💰 ${planInfo.label} — ₹${planInfo.price}\n🔖 ${orderRef}`,
+        { parse_mode: 'Markdown' }
+      ).catch(() => {});
+    }
+  } catch (err) {
+    lastError = err.message;
+    await ctx.editMessageText('❌ Error creating order. Please try /premium again.');
+  }
+}
+
+bot.command('payments', async (ctx) => {
   const chatId = ctx.chat.id;
   if (!adminAuth.has(chatId)) return ctx.reply('🔒 Admin access required. Use /password first.');
 
-  const parts = ctx.message.text.split(' ');
-  if (parts.length < 3) return ctx.reply('Usage: /activate <ticket_id> <plan>\nPlans: monthly (30d), yearly (365d)');
+  const orders = await db.getPendingPayments();
+  if (!orders.length) return ctx.reply('✅ No pending payments.');
 
-  const ticketId = parseInt(parts[1]);
+  let msg = `📋 *Pending Payments (${orders.length})*\n\n`;
+  orders.slice(0, 10).forEach(o => {
+    const name = o.first_name || o.username || `User ${o.chat_id}`;
+    const hasSS = o.screenshot_file_id ? '📸' : '❌';
+    msg += `${o.order_ref} — ${name} — ₹${o.amount} ${hasSS}\n`;
+    msg += `» ${o.plan} | ${new Date(o.created_at).toLocaleDateString()}\n\n`;
+  });
+  if (orders.length > 10) msg += `...and ${orders.length - 10} more\n`;
+  msg += 'Use `/activate <ref> <plan>` to confirm';
+
+  await ctx.replyWithMarkdown(msg);
+});
+
+bot.command('activate', async (ctx) => {
+  const adminId = ctx.chat.id;
+  if (!adminAuth.has(adminId)) return ctx.reply('🔒 Admin access required. Use /password first.');
+
+  const parts = ctx.message.text.split(' ');
+  if (parts.length < 3) return ctx.reply('Usage: /activate <ticket_id|order_ref> <plan>\nPlans: monthly (30d), yearly (365d)\n\nExamples:\n/activate 5 monthly   — via ticket #5\n/activate BG-A7X3K monthly — via payment order');
+
+  const ident = parts[1];
   const plan = parts[2]?.toLowerCase();
 
-  if (isNaN(ticketId)) return ctx.reply('❌ Invalid ticket ID');
   if (plan !== 'monthly' && plan !== 'yearly') return ctx.reply('❌ Invalid plan. Use: monthly or yearly');
 
-  const ticket = await db.getTicketById(ticketId);
-  if (!ticket) return ctx.reply('❌ Ticket not found');
-  if (ticket.status === 'closed') return ctx.reply('❌ Ticket is already closed');
+  const planLabel = plan === 'monthly' ? 'Monthly' : 'Yearly';
+  let userChatId;
+  let sourceInfo;
 
   try {
-    const { days } = await db.activatePremiumByAdmin(ticket.chat_id, plan, ticketId, chatId);
-    const planLabel = plan === 'monthly' ? 'Monthly' : 'Yearly';
+    if (/^BG-/i.test(ident)) {
+      const orderRef = ident.toUpperCase();
+      const order = await db.getPaymentOrderByRef(orderRef);
+      if (!order) return ctx.reply('❌ Order not found');
+      if (order.status !== 'pending') return ctx.reply('❌ Order already processed (' + order.status + ')');
+
+      const result = await db.confirmPaymentOrder(orderRef, plan);
+      userChatId = result.chat_id;
+      sourceInfo = `📦 Order: ${orderRef}`;
+    } else {
+      const ticketId = parseInt(ident);
+      if (isNaN(ticketId)) return ctx.reply('❌ Invalid ID. Use a ticket number or BG- order ref');
+
+      const ticket = await db.getTicketById(ticketId);
+      if (!ticket) return ctx.reply('❌ Ticket not found');
+      if (ticket.status === 'closed') return ctx.reply('❌ Ticket is already closed');
+
+      const result = await db.activatePremiumByAdmin(ticket.chat_id, plan, ticketId, adminId);
+      userChatId = result.chat_id;
+      sourceInfo = `🎫 Ticket #${ticketId}`;
+    }
 
     await ctx.replyWithMarkdown(
-      `✅ *Premium Activated!*\n\n👤 Ticket #${ticketId}\n📆 Plan: ${planLabel} (${days} days)\n✅ Ticket closed.`
+      `✅ *Premium Activated!*\n\n${sourceInfo}\n📆 Plan: ${planLabel}\n✅ Done.`
     );
 
     await ctx.telegram.sendMessage(
-      ticket.chat_id,
-      `🎉 *Congratulations!* 🎉\n\nYour *${planLabel} Premium* plan has been activated!\n📆 Duration: *${days} days unlimited*\n\n✨ No daily limits anymore!\n🔹 /stats — Check your status\n🔹 /share — Earn more rewards\n\nThank you for your support! 🙏`,
+      userChatId,
+      `🎉 *Congratulations!* 🎉\n\nYour *${planLabel} Premium* plan has been activated!\n📆 Duration: ${plan === 'monthly' ? '30 days' : '365 days'} unlimited\n\n✨ No daily limits anymore!\n🔹 /stats — Check your status\n🔹 /share — Earn more rewards\n\nThank you for your support! 🙏`,
       { parse_mode: 'Markdown' }
     ).catch(() => {
       ctx.reply('⚠️ Premium activated but user may have blocked the bot.');
@@ -295,6 +396,7 @@ bot.command('activate', async (ctx) => {
 });
 
 const userMode = new Map();
+const pendingPayment = new Map();
 const adminAuth = new Set();
 const passwordFails = new Map();
 const MEME_URL = 'https://res.cloudinary.com/dm2hjn5wp/image/upload/q_auto/f_auto/v1779618463/memme_uq0haa.jpg';
@@ -374,6 +476,28 @@ bot.on('photo', async (ctx) => {
   const chatId = ctx.chat.id;
   const { first_name: name, username } = ctx.chat;
   await db.upsertUser(chatId, name, username);
+
+  if (pendingPayment.has(chatId)) {
+    const order = pendingPayment.get(chatId);
+    const photo = ctx.message.photo;
+    const fileId = photo[photo.length - 1].file_id;
+
+    await db.attachScreenshot(order.orderRef, fileId);
+    pendingPayment.delete(chatId);
+
+    await ctx.reply('✅ Payment screenshot received! Admin will verify soon.\n\nYou can check your status via /stats');
+
+    if (config.ADMIN_CHAT_ID) {
+      const displayName = name || username || `User ${chatId}`;
+      const mention = username ? `@${username}` : `\`${chatId}\``;
+      await ctx.telegram.sendMessage(
+        config.ADMIN_CHAT_ID,
+        `📸 *New Payment Screenshot*\n\n👤 ${displayName} (${mention})\n🔖 Ref: ${order.orderRef}\n💰 Plan: ${order.plan}\n\nUse \`/activate ${order.orderRef} ${order.plan}\` to confirm.`,
+        { parse_mode: 'Markdown' }
+      ).catch(() => {});
+    }
+    return;
+  }
 
   const caption = ctx.message.caption || '';
   const isUpscaleCmd = userMode.get(chatId) === 'upscale';

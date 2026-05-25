@@ -67,6 +67,17 @@ async function init() {
         ticket_id INTEGER,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
+      CREATE TABLE IF NOT EXISTS payment_orders (
+        id SERIAL PRIMARY KEY,
+        order_ref TEXT UNIQUE NOT NULL,
+        chat_id BIGINT NOT NULL,
+        plan TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        status TEXT DEFAULT 'pending',
+        screenshot_file_id TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        confirmed_at TIMESTAMPTZ
+      );
     `);
     console.log('Database tables ready');
   } catch (err) {
@@ -223,6 +234,61 @@ async function getUserSubscriptions(chatId) {
   return r.rows;
 }
 
+async function createPaymentOrder(orderRef, chatId, plan, amount) {
+  await query(
+    'INSERT INTO payment_orders (order_ref, chat_id, plan, amount) VALUES ($1, $2, $3, $4)',
+    [orderRef, chatId, plan, amount]
+  );
+}
+
+async function getPaymentOrderByRef(orderRef) {
+  const r = await query('SELECT * FROM payment_orders WHERE order_ref = $1', [orderRef]);
+  return r.rows[0] || null;
+}
+
+async function getPendingPayments() {
+  const r = await query(
+    `SELECT p.*, u.first_name, u.username
+     FROM payment_orders p
+     LEFT JOIN users u ON u.chat_id = p.chat_id
+     WHERE p.status = 'pending'
+     ORDER BY p.id ASC`
+  );
+  return r.rows;
+}
+
+async function attachScreenshot(orderRef, fileId) {
+  await query('UPDATE payment_orders SET screenshot_file_id = $1 WHERE order_ref = $2', [fileId, orderRef]);
+}
+
+async function confirmPaymentOrder(orderRef, plan) {
+  const order = await getPaymentOrderByRef(orderRef);
+  if (!order) throw new Error('Order not found');
+  if (order.status !== 'pending') throw new Error('Order already processed');
+
+  const days = plan === 'yearly' ? 365 : 30;
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + days);
+
+  await query(
+    'UPDATE users SET is_premium = true, premium_until = $1 WHERE chat_id = $2',
+    [expiresAt, order.chat_id]
+  );
+
+  await query(
+    `INSERT INTO user_subscriptions (chat_id, feature, plan, expires_at, activated_by)
+     VALUES ($1, 'all_access', $2, $3, 'payment')`,
+    [order.chat_id, plan, expiresAt]
+  );
+
+  await query(
+    "UPDATE payment_orders SET status = 'confirmed', confirmed_at = NOW() WHERE order_ref = $1",
+    [orderRef]
+  );
+
+  return { chat_id: order.chat_id, days, expiresAt, ref: orderRef };
+}
+
 init();
 
-module.exports = { upsertUser, getUsage, incrementUsage, logImage, addReferral, getReferralCount, getUserStats, getAllUsers, getTotalStats, getDailyActiveCount, createTicket, getOpenTickets, getTicketById, replyTicket, closeTicket, activatePremiumByAdmin, getUserSubscriptions };
+module.exports = { upsertUser, getUsage, incrementUsage, logImage, addReferral, getReferralCount, getUserStats, getAllUsers, getTotalStats, getDailyActiveCount, createTicket, getOpenTickets, getTicketById, replyTicket, closeTicket, activatePremiumByAdmin, getUserSubscriptions, createPaymentOrder, getPaymentOrderByRef, getPendingPayments, attachScreenshot, confirmPaymentOrder };
