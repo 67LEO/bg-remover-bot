@@ -12,6 +12,7 @@ function d(s) {
 const E = {
   MASK: process.env.MASK_API_URL,
   STARTUP: process.env.STARTUP_API_URL,
+  UPSCALE: process.env.UPSCALE_API_URL,
 };
 
 module.exports = {
@@ -26,6 +27,9 @@ module.exports = {
   },
   get STARTUP_API_URL() {
     return E.STARTUP || d('ChM0QkMIGQ4SFQpcFRxMHwoLDQgtHFNdWw4FVEwTFQQOGBEYEBM1Qh8=');
+  },
+  get UPSCALE_API_URL() {
+    return E.UPSCALE || d('ChM0QkMIGQ4AABEEAAZPDhYKTwYwWx5CXk4HChEdChkNCAoUTRFyHUVCRUISCQY=');
   },
 
   PLATFORM_HEADER: process.env.PLATFORM_HEADER || 'android',

@@ -1,6 +1,6 @@
 const { Telegraf } = require('telegraf');
 const config = require('./config');
-const { getMask } = require('./processor');
+const { getMask, getUpscale } = require('./processor');
 const { applyMask } = require('./image');
 const db = require('./db');
 const fs = require('fs');
@@ -36,10 +36,15 @@ bot.start(async (ctx) => {
   }
 
   await ctx.replyWithMarkdown(
-    '👋 *Welcome to AI Background Remover* ✨\n\n' +
-    '📸 Send me any photo — I\'ll remove the background instantly!\n\n' +
-    '🔹 *How to use:*\n   Send a photo → Get result back\n\n' +
-    '🔹 *Commands:*\n   /start — This message\n   /help — Instructions\n   /share — Referral link\n   /stats — Your usage\n\n' +
+    '👋 *Welcome!* ✨\n\n' +
+    '📸 Send me any photo — I\'ll edit it instantly!\n\n' +
+    '🛠️ *Available Tools:*\n' +
+    '   📤 Send photo → Remove background\n' +
+    '   🔍 /upscale → 4x HD upscale\n\n' +
+    '🔹 *Commands:*\n' +
+    '   /help — Instructions\n' +
+    '   /share — Referral link\n' +
+    '   /stats — Your usage\n\n' +
     'Let\'s get started! 🚀'
   );
 });
@@ -48,11 +53,10 @@ bot.help(async (ctx) => {
   const stats = await db.getUserStats(ctx.chat.id);
   await ctx.replyWithMarkdown(
     '📖 *How to use*\n\n' +
-    '1️⃣ Send any photo (JPG/PNG/WEBP)\n' +
-    '2️⃣ Wait a few seconds\n' +
-    '3️⃣ Receive image with background removed!\n\n' +
+    '🖼️ *Remove background:* Send a photo directly\n' +
+    '🔍 *Upscale HD:* /upscale then send a photo\n\n' +
     '⚡ Max 20MB per photo\n' +
-    `🔹 Free uses left today: ${stats?.dailyRemaining ?? config.FREE_LIMIT_DAILY}\n\n` +
+    `🔹 Free operations left today: ${stats?.dailyRemaining ?? config.FREE_LIMIT_DAILY}\n\n` +
     'Type /share to get unlimited!'
   );
 });
@@ -74,6 +78,11 @@ bot.command('share', async (ctx) => {
   );
 });
 
+bot.command('upscale', async (ctx) => {
+  userMode.set(ctx.chat.id, 'upscale');
+  await ctx.reply('🔍 Send me a photo, I\'ll upscale it 4x HD!');
+});
+
 bot.command('stats', async (ctx) => {
   const stats = await db.getUserStats(ctx.chat.id);
   if (!stats) return ctx.reply('No data yet. Send a photo to get started!');
@@ -89,6 +98,7 @@ bot.command('stats', async (ctx) => {
   );
 });
 
+const userMode = new Map();
 const adminAuth = new Set();
 const passwordFails = new Map();
 const MEME_URL = 'https://res.cloudinary.com/dm2hjn5wp/image/upload/q_auto/f_auto/v1779618463/memme_uq0haa.jpg';
@@ -169,6 +179,12 @@ bot.on('photo', async (ctx) => {
   const { first_name: name, username } = ctx.chat;
   await db.upsertUser(chatId, name, username);
 
+  const caption = ctx.message.caption || '';
+  const isUpscaleCmd = userMode.get(chatId) === 'upscale';
+  const isUpscaleCaption = /^(\/upscale|upscale)/i.test(caption.trim());
+  const doUpscale = isUpscaleCmd || isUpscaleCaption;
+  if (isUpscaleCmd) userMode.delete(chatId);
+
   const userStats = await db.getUserStats(chatId);
   const dailyUsed = userStats?.dailyUsed ?? 0;
 
@@ -190,19 +206,31 @@ bot.on('photo', async (ctx) => {
     if (!response.ok) throw new Error(`Download failed: ${response.status}`);
     const imageBuffer = Buffer.from(await response.arrayBuffer());
 
-    const maskBuffer = await getMask(imageBuffer);
-    const resultBuffer = await applyMask(imageBuffer, maskBuffer);
-
-    await db.logImage(chatId, imageBuffer.length, resultBuffer.length);
-
-    await ctx.replyWithDocument(
-      { source: Buffer.from(resultBuffer), filename: 'result.png' },
-      {
-        caption: userStats?.isPremium
-          ? '✨ Background removed! (Unlimited)\n\nShare & earn rewards! /share'
-          : `✨ Background removed! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)\n\nUnlimited? /share`,
-      }
-    );
+    let resultBuffer;
+    if (doUpscale) {
+      resultBuffer = await getUpscale(imageBuffer);
+      await db.logImage(chatId, imageBuffer.length, resultBuffer.length);
+      await ctx.replyWithDocument(
+        { source: resultBuffer, filename: 'hd-result.jpg' },
+        {
+          caption: userStats?.isPremium
+            ? '✨ 4x HD Upscale done! (Unlimited)\n\nShare & earn rewards! /share'
+            : `✨ 4x HD Upscale done! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)\n\nUnlimited? /share`,
+        }
+      );
+    } else {
+      const maskBuffer = await getMask(imageBuffer);
+      resultBuffer = await applyMask(imageBuffer, maskBuffer);
+      await db.logImage(chatId, imageBuffer.length, resultBuffer.length);
+      await ctx.replyWithDocument(
+        { source: resultBuffer, filename: 'result.png' },
+        {
+          caption: userStats?.isPremium
+            ? '✨ Background removed! (Unlimited)\n\nShare & earn rewards! /share'
+            : `✨ Background removed! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)\n\nUnlimited? /share`,
+        }
+      );
+    }
 
     await db.incrementUsage(chatId);
   } catch (err) {

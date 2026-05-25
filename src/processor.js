@@ -1,6 +1,59 @@
 const config = require('./config');
 const { ensureAuth, appStartup } = require('./firebase');
 
+async function getUpscale(imageBuffer, scale = 2) {
+  await appStartup();
+  const { idToken } = await ensureAuth();
+
+  const boundary = '----boundary' + Date.now();
+  const enc = Buffer.from;
+  const parts = [];
+
+  const addField = (name, value) => {
+    parts.push(enc('--' + boundary + '\r\n'));
+    parts.push(enc('Content-Disposition: form-data; name="' + name + '"\r\n\r\n'));
+    parts.push(enc(value + '\r\n'));
+  };
+
+  const addFile = (name, filename, buf, contentType) => {
+    parts.push(enc('--' + boundary + '\r\n'));
+    parts.push(enc('Content-Disposition: form-data; name="' + name + '"; filename="' + filename + '"\r\n'));
+    parts.push(enc('Content-Type: ' + contentType + '\r\n\r\n'));
+    parts.push(buf);
+    parts.push(enc('\r\n'));
+  };
+
+  addFile('imageFile', 'image.jpg', imageBuffer, 'image/jpeg');
+  addField('creativity', '0.5');
+  addField('scale', String(scale));
+
+  parts.push(enc('--' + boundary + '--\r\n'));
+  const body = Buffer.concat(parts);
+
+  const res = await fetch(config.UPSCALE_API_URL, {
+    method: 'POST',
+    headers: {
+      authorization: idToken,
+      'pr-platform': config.PLATFORM_HEADER,
+      'pr-app-version': config.APP_VER_HEADER,
+      'pr-current-space-entitlement': config.ENTITLEMENT_HEADER,
+      'pr-user-bcp-language': config.LANG_HEADER,
+      'pr-telemetry-enabled': config.TELEMETRY_HEADER,
+      'pr-main-subject-id': 'not_set',
+      'pr-user-timezone': config.TZ_HEADER,
+      'Content-Type': 'multipart/form-data; boundary=' + boundary,
+    },
+    body,
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Upscale failed: ${res.status} ${err.slice(0, 300)}`);
+  }
+
+  return Buffer.from(await res.arrayBuffer());
+}
+
 async function getMask(imageBuffer) {
   await appStartup();
   const { idToken, localId } = await ensureAuth();
@@ -37,4 +90,4 @@ async function getMask(imageBuffer) {
   return Buffer.from(data.b64_mask, 'base64');
 }
 
-module.exports = { getMask };
+module.exports = { getMask, getUpscale };
