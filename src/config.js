@@ -45,6 +45,7 @@ module.exports = {
 
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
   ADMIN_CHAT_ID: process.env.ADMIN_CHAT_ID ? Number(process.env.ADMIN_CHAT_ID) : null,
+  ADMIN_BOT_TOKEN: process.env.ADMIN_BOT_TOKEN,
 
   UPI_ID: process.env.UPI_ID || 'abc@fam',
   UPI_NAME: process.env.UPI_NAME || 'Mohit',
