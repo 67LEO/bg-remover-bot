@@ -37,18 +37,22 @@ bot.start(async (ctx) => {
   }
 
   await ctx.replyWithMarkdown(
-    '👋 *Welcome!* ✨\n\n' +
-    '📸 Send me any photo — I\'ll edit it instantly!\n\n' +
-    '🛠️ *Available Tools:*\n' +
-    '   📤 Send photo → Remove background\n' +
-    '   🔍 /upscale → 4x HD upscale\n' +
-    '   🎨 /imagine → AI image generator\n\n' +
-     '🔹 *Commands:*\n' +
-     '   /help — Instructions\n' +
-     '   /share — Referral link\n' +
-     '   /stats — Your usage\n' +
-     '   /support — Contact support\n\n' +
-     'Let\'s get started! 🚀'
+    '👋 *Welcome to the Ultimate AI Editing Bot* ✨\n\n' +
+    'Transform your images instantly with powerful AI tools 🚀\n\n' +
+    '🛠 *Features:*\n' +
+    '🎯 Background Remover\n' +
+    '🔍 4x HD Image Upscaler\n' +
+    '🎨 AI Image Generator (Flux Pro)\n\n' +
+    '📌 *Commands:*\n' +
+    '🖼 Send any photo — Remove background\n' +
+    '/upscale — Enhance image quality in HD\n' +
+    '/imagine — Generate AI images from text\n\n' +
+    '⚡ *Extra Commands:*\n' +
+    '/help — How to use the bot\n' +
+    '/share — Invite friends\n' +
+    '/stats — Check your usage\n' +
+    '/support — Contact support\n\n' +
+    'Create stunning images in seconds with AI 🤖'
   );
 });
 
