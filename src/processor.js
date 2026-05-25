@@ -100,4 +100,65 @@ async function getMask(imageBuffer) {
   return Buffer.from(data.b64_mask, 'base64');
 }
 
-module.exports = { getMask, getUpscale };
+async function generateImage(prompt, style = 'ultra-realistic', size = 'SQUARE_HD') {
+  await appStartup();
+  const { idToken } = await ensureAuth();
+
+  const body = {
+    userPrompt: prompt,
+    appId: 'expert',
+    styleId: style,
+    sizeId: size,
+    numberOfImages: 1,
+  };
+
+  const res = await fetch(config.AI_GEN_API_URL, {
+    method: 'POST',
+    headers: {
+      authorization: idToken,
+      'pr-app-version': config.APP_VER_HEADER,
+      'pr-platform': config.PLATFORM_HEADER,
+      'pr-current-space-entitlement': config.ENTITLEMENT_HEADER,
+      'pr-user-bcp-language': config.LANG_HEADER,
+      'pr-telemetry-enabled': config.TELEMETRY_HEADER,
+      'pr-main-subject-id': 'not_set',
+      'pr-user-timezone': config.TZ_HEADER,
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`AI generate failed: ${res.status} ${err.slice(0, 300)}`);
+  }
+
+  const text = await res.text();
+  let imageUrl = null;
+
+  for (const part of text.split('\n\n')) {
+    const dataLine = part.split('\n').find(l => l.startsWith('data:'));
+    if (!dataLine) continue;
+    try {
+      const event = JSON.parse(dataLine.replace('data:', '').trim());
+      if (event.eventType === 'aiImageResult' && event.imageUrl) {
+        imageUrl = event.imageUrl;
+        break;
+      }
+      if (event.eventType === 'error') {
+        throw new Error(`AI gen error: ${event.errorMessage || 'Unknown'}`);
+      }
+    } catch (e) {
+      if (e.message.startsWith('AI gen error')) throw e;
+    }
+  }
+
+  if (!imageUrl) throw new Error('No image URL in response');
+
+  const imgRes = await fetch(imageUrl);
+  if (!imgRes.ok) throw new Error(`Download generated image failed: ${imgRes.status}`);
+  return Buffer.from(await imgRes.arrayBuffer());
+}
+
+module.exports = { getMask, getUpscale, generateImage };

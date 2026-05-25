@@ -1,6 +1,6 @@
 const { Telegraf } = require('telegraf');
 const config = require('./config');
-const { getMask, getUpscale } = require('./processor');
+const { getMask, getUpscale, generateImage } = require('./processor');
 const { applyMask } = require('./image');
 const db = require('./db');
 const fs = require('fs');
@@ -40,7 +40,8 @@ bot.start(async (ctx) => {
     '📸 Send me any photo — I\'ll edit it instantly!\n\n' +
     '🛠️ *Available Tools:*\n' +
     '   📤 Send photo → Remove background\n' +
-    '   🔍 /upscale → 4x HD upscale\n\n' +
+    '   🔍 /upscale → 4x HD upscale\n' +
+    '   🎨 /imagine → AI image generator\n\n' +
     '🔹 *Commands:*\n' +
     '   /help — Instructions\n' +
     '   /share — Referral link\n' +
@@ -54,7 +55,8 @@ bot.help(async (ctx) => {
   await ctx.replyWithMarkdown(
     '📖 *How to use*\n\n' +
     '🖼️ *Remove background:* Send a photo directly\n' +
-    '🔍 *Upscale HD:* /upscale then send a photo\n\n' +
+    '🔍 *Upscale HD:* /upscale then send a photo\n' +
+    '🎨 *AI Generate:* /imagine your prompt\n\n' +
     '⚡ Max 20MB per photo\n' +
     `🔹 Free operations left today: ${stats?.dailyRemaining ?? config.FREE_LIMIT_DAILY}\n\n` +
     'Type /share to get unlimited!'
@@ -81,6 +83,37 @@ bot.command('share', async (ctx) => {
 bot.command('upscale', async (ctx) => {
   userMode.set(ctx.chat.id, 'upscale');
   await ctx.reply('🔍 Send me a photo, I\'ll upscale it 4x HD!');
+});
+
+bot.command('imagine', async (ctx) => {
+  const chatId = ctx.chat.id;
+  const text = ctx.message.text.slice('/imagine'.length).trim();
+  if (!text) {
+    return await ctx.replyWithMarkdown(
+      '🎨 *AI Image Generator*\n\n' +
+      'Usage: `/imagine <your prompt>`\n\n' +
+      'Example: `/imagine a cute cat on a windowsill, photorealistic`\n\n' +
+      'Powered by FLUX Pro 🚀'
+    );
+  }
+
+  const msg = await ctx.reply('🎨 Generating image...');
+
+  try {
+    const imgBuf = await generateImage(text);
+    await ctx.replyWithPhoto(
+      { source: imgBuf },
+      { caption: '✨ "' + text.slice(0, 200) + '"' }
+    );
+    await db.incrementUsage(chatId);
+  } catch (err) {
+    lastError = err.message;
+    console.error('=== ERROR ===');
+    console.error('Message:', err.message);
+    await ctx.reply('❌ Error: ' + err.message.substring(0, 100));
+  } finally {
+    await ctx.deleteMessage(msg.message_id).catch(() => {});
+  }
 });
 
 bot.command('stats', async (ctx) => {
