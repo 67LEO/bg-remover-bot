@@ -1,9 +1,19 @@
 const config = require('./config');
 const { ensureAuth, appStartup } = require('./firebase');
+const sharp = require('sharp');
 
 async function getUpscale(imageBuffer, scale = 2) {
   await appStartup();
   const { idToken } = await ensureAuth();
+
+  const meta = await sharp(imageBuffer).metadata();
+  const MAX_DIM = 800;
+  if ((meta.width || 0) > MAX_DIM || (meta.height || 0) > MAX_DIM) {
+    imageBuffer = await sharp(imageBuffer)
+      .resize(MAX_DIM, MAX_DIM, { fit: 'inside' })
+      .jpeg({ quality: 92 })
+      .toBuffer();
+  }
 
   const boundary = '----boundary' + Date.now();
   const enc = Buffer.from;
