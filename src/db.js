@@ -46,6 +46,15 @@ async function init() {
         result_size INTEGER,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
+      CREATE TABLE IF NOT EXISTS support_tickets (
+        id SERIAL PRIMARY KEY,
+        chat_id BIGINT NOT NULL,
+        message TEXT NOT NULL,
+        status TEXT DEFAULT 'open',
+        admin_reply TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        replied_at TIMESTAMPTZ
+      );
     `);
     console.log('Database tables ready');
   } catch (err) {
@@ -135,6 +144,41 @@ async function getDailyActiveCount() {
   return parseInt(r.rows[0]?.c || '0');
 }
 
+async function createTicket(chatId, message) {
+  const r = await query(
+    'INSERT INTO support_tickets (chat_id, message) VALUES ($1, $2) RETURNING id',
+    [chatId, message]
+  );
+  return r.rows[0].id;
+}
+
+async function getOpenTickets() {
+  const r = await query(
+    `SELECT t.*, u.first_name, u.username
+     FROM support_tickets t
+     LEFT JOIN users u ON u.chat_id = t.chat_id
+     WHERE t.status = 'open'
+     ORDER BY t.id ASC`
+  );
+  return r.rows;
+}
+
+async function getTicketById(id) {
+  const r = await query('SELECT * FROM support_tickets WHERE id = $1', [id]);
+  return r.rows[0] || null;
+}
+
+async function replyTicket(id, adminReply) {
+  await query(
+    "UPDATE support_tickets SET status = 'replied', admin_reply = $1, replied_at = NOW() WHERE id = $2",
+    [adminReply, id]
+  );
+}
+
+async function closeTicket(id) {
+  await query("UPDATE support_tickets SET status = 'closed' WHERE id = $1", [id]);
+}
+
 init();
 
-module.exports = { upsertUser, getUsage, incrementUsage, logImage, addReferral, getReferralCount, getUserStats, getAllUsers, getTotalStats, getDailyActiveCount };
+module.exports = { upsertUser, getUsage, incrementUsage, logImage, addReferral, getReferralCount, getUserStats, getAllUsers, getTotalStats, getDailyActiveCount, createTicket, getOpenTickets, getTicketById, replyTicket, closeTicket };

@@ -42,11 +42,12 @@ bot.start(async (ctx) => {
     '   📤 Send photo → Remove background\n' +
     '   🔍 /upscale → 4x HD upscale\n' +
     '   🎨 /imagine → AI image generator\n\n' +
-    '🔹 *Commands:*\n' +
-    '   /help — Instructions\n' +
-    '   /share — Referral link\n' +
-    '   /stats — Your usage\n\n' +
-    'Let\'s get started! 🚀'
+     '🔹 *Commands:*\n' +
+     '   /help — Instructions\n' +
+     '   /share — Referral link\n' +
+     '   /stats — Your usage\n' +
+     '   /support — Contact support\n\n' +
+     'Let\'s get started! 🚀'
   );
 });
 
@@ -57,9 +58,10 @@ bot.help(async (ctx) => {
     '🖼️ *Remove background:* Send a photo directly\n' +
     '🔍 *Upscale HD:* /upscale then send a photo\n' +
     '🎨 *AI Generate:* /imagine your prompt\n\n' +
-    '⚡ Max 20MB per photo\n' +
-    `🔹 Free operations left today: ${stats?.dailyRemaining ?? config.FREE_LIMIT_DAILY}\n\n` +
-    'Type /share to get unlimited!'
+     '⚡ Max 20MB per photo\n' +
+     `🔹 Free operations left today: ${stats?.dailyRemaining ?? config.FREE_LIMIT_DAILY}\n\n` +
+     'Type /share to get unlimited!\n' +
+     '💬 Need help? /support'
   );
 });
 
@@ -145,6 +147,113 @@ bot.command('stats', async (ctx) => {
     `🏅 Plan: *${stats.isPremium ? 'Premium' : 'Free'}*\n` +
     `📆 Joined: *${stats.joinedAt}*`
   );
+});
+
+bot.command('support', async (ctx) => {
+  const chatId = ctx.chat.id;
+  const text = ctx.message.text.slice('/support'.length).trim();
+  if (!text) {
+    return await ctx.replyWithMarkdown(
+      '💬 *Contact Support*\n\n' +
+      'Usage: `/support your message`\n\n' +
+      'Example: `/support meri photo process nahi ho rahi hai`\n\n' +
+      'Our team will get back to you soon!'
+    );
+  }
+
+  const { first_name: name, username } = ctx.chat;
+  await db.upsertUser(chatId, name, username);
+
+  try {
+    const ticketId = await db.createTicket(chatId, text);
+    await ctx.reply(`✅ *Ticket #${ticketId} submitted!*\n\nOur team will review your query and get back to you soon.`, { parse_mode: 'Markdown' });
+
+    if (config.ADMIN_CHAT_ID) {
+      const displayName = name || username || `User ${chatId}`;
+      const mention = username ? `@${username}` : `\`${chatId}\``;
+      await ctx.telegram.sendMessage(
+        config.ADMIN_CHAT_ID,
+        `📩 *New Support Ticket #${ticketId}*\n\n👤 ${displayName} (${mention})\n💬 \`${text.substring(0, 200)}\`\n\nUse \`/reply ${ticketId} your message\` to respond.`,
+        { parse_mode: 'Markdown' }
+      ).catch(() => {});
+    }
+  } catch (err) {
+    lastError = err.message;
+    await ctx.reply('❌ Error submitting ticket. Please try again later.');
+  }
+});
+
+bot.command('tickets', async (ctx) => {
+  const chatId = ctx.chat.id;
+  if (!adminAuth.has(chatId)) return ctx.reply('🔒 Admin access required. Use /password first.');
+
+  const tickets = await db.getOpenTickets();
+  if (!tickets.length) return ctx.reply('✅ No open tickets.');
+
+  let msg = `📋 *Open Tickets (${tickets.length})*\n\n`;
+  tickets.slice(0, 10).forEach(t => {
+    const name = t.first_name || t.username || `User ${t.chat_id}`;
+    msg += `#${t.id} — ${name}\n» ${t.message.substring(0, 80)}${t.message.length > 80 ? '...' : ''}\n\n`;
+  });
+  if (tickets.length > 10) msg += `...and ${tickets.length - 10} more\n`;
+  msg += 'Use `/reply <id> <msg>` or `/close <id>`';
+
+  await ctx.replyWithMarkdown(msg);
+});
+
+bot.command('reply', async (ctx) => {
+  const chatId = ctx.chat.id;
+  if (!adminAuth.has(chatId)) return ctx.reply('🔒 Admin access required. Use /password first.');
+
+  const parts = ctx.message.text.split(' ');
+  if (parts.length < 3) return ctx.reply('Usage: /reply <ticket_id> <your message>');
+
+  const ticketId = parseInt(parts[1]);
+  if (isNaN(ticketId)) return ctx.reply('❌ Invalid ticket ID');
+
+  const replyMsg = parts.slice(2).join(' ').trim();
+  if (!replyMsg) return ctx.reply('❌ Reply message cannot be empty');
+
+  const ticket = await db.getTicketById(ticketId);
+  if (!ticket) return ctx.reply('❌ Ticket not found');
+  if (ticket.status === 'closed') return ctx.reply('❌ Ticket is already closed');
+
+  await db.replyTicket(ticketId, replyMsg);
+  try {
+    await ctx.telegram.sendMessage(
+      ticket.chat_id,
+      `📬 *Reply to your ticket #${ticketId}*\n\n${replyMsg}\n\nNeed more help? Send /support`,
+      { parse_mode: 'Markdown' }
+    );
+    await ctx.reply(`✅ Reply sent to ticket #${ticketId}`);
+  } catch {
+    await ctx.reply(`⚠️ Reply saved but couldn't deliver to user (they may have blocked the bot). Ticket #${ticketId}`);
+  }
+});
+
+bot.command('close', async (ctx) => {
+  const chatId = ctx.chat.id;
+  if (!adminAuth.has(chatId)) return ctx.reply('🔒 Admin access required. Use /password first.');
+
+  const parts = ctx.message.text.split(' ');
+  if (parts.length < 2) return ctx.reply('Usage: /close <ticket_id>');
+
+  const ticketId = parseInt(parts[1]);
+  if (isNaN(ticketId)) return ctx.reply('❌ Invalid ticket ID');
+
+  const ticket = await db.getTicketById(ticketId);
+  if (!ticket) return ctx.reply('❌ Ticket not found');
+
+  await db.closeTicket(ticketId);
+  await ctx.reply(`✅ Ticket #${ticketId} closed.`);
+
+  try {
+    await ctx.telegram.sendMessage(
+      ticket.chat_id,
+      `✅ *Ticket #${ticketId} has been closed.*\n\nIf you have more questions, send /support anytime!`,
+      { parse_mode: 'Markdown' }
+    );
+  } catch {}
 });
 
 const userMode = new Map();

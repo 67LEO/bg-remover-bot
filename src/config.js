@@ -44,6 +44,7 @@ module.exports = {
   TZ_HEADER: process.env.TZ_HEADER || 'UTC',
 
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
+  ADMIN_CHAT_ID: process.env.ADMIN_CHAT_ID ? Number(process.env.ADMIN_CHAT_ID) : null,
 
   FREE_LIMIT_DAILY: 10,
   REFERRAL_BONUS: 5,
