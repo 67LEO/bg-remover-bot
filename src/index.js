@@ -93,7 +93,21 @@ bot.command('imagine', async (ctx) => {
       '🎨 *AI Image Generator*\n\n' +
       'Usage: `/imagine <your prompt>`\n\n' +
       'Example: `/imagine a cute cat on a windowsill, photorealistic`\n\n' +
+      `🔹 Free today: */${config.FREE_LIMIT_DAILY} operations*\n\n` +
       'Powered by FLUX Pro 🚀'
+    );
+  }
+
+  const { first_name: name, username } = ctx.chat;
+  await db.upsertUser(chatId, name, username);
+
+  const userStats = await db.getUserStats(chatId);
+  const dailyUsed = userStats?.dailyUsed ?? 0;
+
+  if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
+    return await ctx.replyWithMarkdown(
+      `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
+      '🔹 Type /share to get unlimited\n🔹 Or wait until tomorrow'
     );
   }
 
@@ -103,7 +117,9 @@ bot.command('imagine', async (ctx) => {
     const imgBuf = await generateImage(text);
     await ctx.replyWithPhoto(
       { source: imgBuf },
-      { caption: '✨ "' + text.slice(0, 200) + '"' }
+      { caption: userStats?.isPremium
+          ? '✨ AI Generated! (Unlimited)\n\nShare & earn rewards! /share'
+          : `✨ AI Generated! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)\n\nUnlimited? /share` }
     );
     await db.incrementUsage(chatId);
   } catch (err) {

@@ -45,6 +45,6 @@ module.exports = {
 
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
 
-  FREE_LIMIT_DAILY: 3,
+  FREE_LIMIT_DAILY: 10,
   REFERRAL_BONUS: 5,
 };
