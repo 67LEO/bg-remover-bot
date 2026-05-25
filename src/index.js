@@ -218,12 +218,28 @@ async function handleBuyPlan(ctx, plan) {
     pendingPayment.set(chatId, { orderRef, plan });
 
     await ctx.editMessageText(
-      `✅ *Order Created!*\n\n` +
-      `💰 Plan: *${planInfo.label}* — ₹${planInfo.price}\n` +
-      `🔖 Reference: \`${orderRef}\`\n\n` +
-      `📲 Pay to UPI:\n\`${config.UPI_ID}\`\n👤 ${config.UPI_NAME}\n\n` +
-      `📸 *After payment, send the screenshot here*`,
+      `✅ *Order Created!* 🔖 \`${orderRef}\``,
       { parse_mode: 'Markdown' }
+    );
+
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=upi://pay?pa=${encodeURIComponent(config.UPI_ID)}&pn=${encodeURIComponent(config.UPI_NAME)}&am=${planInfo.price}&tn=${orderRef}`;
+
+    await ctx.replyWithPhoto(
+      qrUrl,
+      {
+        caption:
+          `✨ *${planInfo.label} Premium — ₹${planInfo.price}* ✨\n\n` +
+          `🎯 *Benefits:*\n` +
+          `✅ Unlimited background removal\n` +
+          `✅ 4x HD Upscale\n` +
+          `✅ AI Image Generation\n` +
+          `🔜 AI Video Generation *(Coming Soon)*\n` +
+          `🔜 AI Voice & Sound *(Coming Soon)*\n\n` +
+          `📌 *Step 1:* Scan QR & pay ₹${planInfo.price}\n` +
+          `📌 *Step 2:* Send payment screenshot here\n\n` +
+          `Cancel? /cancel`,
+        parse_mode: 'Markdown'
+      }
     );
 
     const displayName = name || username || `User ${chatId}`;
@@ -232,6 +248,15 @@ async function handleBuyPlan(ctx, plan) {
     await ctx.editMessageText('❌ Error creating order. Please try /premium again.');
   }
 }
+
+bot.command('cancel', async (ctx) => {
+  if (pendingPayment.has(ctx.chat.id)) {
+    pendingPayment.delete(ctx.chat.id);
+    await ctx.reply('✅ Payment cancelled. Type /premium anytime to buy again.');
+  } else {
+    await ctx.reply('No pending payment to cancel.');
+  }
+});
 
 const userMode = new Map();
 const pendingPayment = new Map();
@@ -258,16 +283,15 @@ bot.command('debug', async (ctx) => {
   await ctx.reply(msg, { parse_mode: 'MarkdownV2' });
 });
 
-bot.command('debug', async (ctx) => {
-  const vars = [
-    ['BOT_TOKEN', !!config.BOT_TOKEN],
-    ['FIREBASE_API_KEY', !!config.FIREBASE_API_KEY],
-    ['FIREBASE_PROJECT_ID', !!config.FIREBASE_PROJECT_ID],
-  ];
-  let msg = '*Bot Status*\n';
-  vars.forEach(([k, v]) => msg += `${escMd(k)}: ${v ? '✅' : '❌'}\n`);
-  msg += `\nNode: ${escMd(process.version)}`;
-  await ctx.reply(msg, { parse_mode: 'MarkdownV2' });
+bot.on('text', async (ctx) => {
+  const chatId = ctx.chat.id;
+  if (pendingPayment.has(chatId)) {
+    await ctx.replyWithMarkdown(
+      '❌ Please send the payment *screenshot* (photo), not text.\n\n' +
+      'Scan the QR code, pay, and send the screenshot here.\n' +
+      'Cancel? /cancel'
+    );
+  }
 });
 
 bot.on('photo', async (ctx) => {
