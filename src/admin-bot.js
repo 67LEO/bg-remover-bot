@@ -8,6 +8,7 @@ if (!config.ADMIN_BOT_TOKEN) {
 } else {
 
 const bot = new Telegraf(config.ADMIN_BOT_TOKEN);
+const mainBot = new Telegraf(config.BOT_TOKEN);
 
 const adminAuth = new Set();
 const passwordFails = new Map();
@@ -132,7 +133,7 @@ bot.command('reply', async (ctx) => {
 
   await db.replyTicket(ticketId, replyMsg);
   try {
-    await ctx.telegram.sendMessage(
+    await mainBot.telegram.sendMessage(
       ticket.chat_id,
       `📬 *Reply to your ticket #${ticketId}*\n\n${replyMsg}\n\nNeed more help? Send /support`,
       { parse_mode: 'Markdown' }
@@ -160,7 +161,7 @@ bot.command('close', async (ctx) => {
   await ctx.reply(`✅ Ticket #${ticketId} closed.`);
 
   try {
-    await ctx.telegram.sendMessage(
+    await mainBot.telegram.sendMessage(
       ticket.chat_id,
       `✅ *Ticket #${ticketId} has been closed.*\n\nIf you have more questions, send /support anytime!`,
       { parse_mode: 'Markdown' }
@@ -211,7 +212,7 @@ bot.command('activate', async (ctx) => {
       `✅ *Premium Activated!*\n\n${sourceInfo}\n📆 Plan: ${planLabel}\n✅ Done.`
     );
 
-    await ctx.telegram.sendMessage(
+    await mainBot.telegram.sendMessage(
       userChatId,
       `🎉 *Congratulations!* 🎉\n\nYour *${planLabel} Premium* plan has been activated!\n📆 Duration: ${plan === 'monthly' ? '30 days' : '365 days'} unlimited\n\n✨ No daily limits anymore!\n🔹 /stats — Check your status\n🔹 /share — Earn more rewards\n\nThank you for your support! 🙏`,
       { parse_mode: 'Markdown' }
