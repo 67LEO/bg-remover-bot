@@ -10,16 +10,16 @@ if (!config.ADMIN_BOT_TOKEN) {
 const bot = new Telegraf(config.ADMIN_BOT_TOKEN);
 const mainBot = new Telegraf(config.BOT_TOKEN);
 
-const adminAuth = new Set();
-const passwordFails = new Map();
-const MEME_URL = 'https://res.cloudinary.com/dm2hjn5wp/image/upload/q_auto/f_auto/v1779618463/memme_uq0haa.jpg';
-
+const ADMIN_ID = config.ADMIN_CHAT_ID;
 let lastError = null;
+
+bot.use((ctx, next) => {
+  if (ctx.chat.id === ADMIN_ID) return next();
+});
 
 bot.start(async (ctx) => {
   await ctx.replyWithMarkdown(
     '🔐 *Admin Bot Ready*\n\n' +
-    'Send /password to login\n\n' +
     '📋 *Commands:*\n' +
     '   /tickets — Open support tickets\n' +
     '   /payments — Pending payment orders\n' +
@@ -31,32 +31,7 @@ bot.start(async (ctx) => {
   );
 });
 
-bot.command('password', async (ctx) => {
-  const chatId = ctx.chat.id;
-  const parts = ctx.message.text.split(' ');
-  if (parts.length < 2) return ctx.reply('Usage: /password YOUR_PASSWORD');
-
-  if (parts.slice(1).join(' ') === config.ADMIN_PASSWORD) {
-    adminAuth.add(chatId);
-    passwordFails.delete(chatId);
-    await ctx.reply('✅ Access granted! Use /tickets or /payments to manage.');
-  } else {
-    const fails = (passwordFails.get(chatId) || 0) + 1;
-    passwordFails.set(chatId, fails);
-
-    if (fails >= 3) {
-      passwordFails.delete(chatId);
-      await ctx.replyWithPhoto(MEME_URL, { caption: '📸💀' });
-    } else {
-      await ctx.reply(`❌ Wrong password (${fails}/3 attempts)`);
-    }
-  }
-});
-
 bot.command('admin', async (ctx) => {
-  const chatId = ctx.chat.id;
-  if (!adminAuth.has(chatId)) return ctx.reply('🔒 Admin access required. Use /password first.');
-
   const total = await db.getTotalStats();
   const users = await db.getAllUsers();
   const dailyActive = await db.getDailyActiveCount();
@@ -77,9 +52,6 @@ bot.command('admin', async (ctx) => {
 });
 
 bot.command('tickets', async (ctx) => {
-  const chatId = ctx.chat.id;
-  if (!adminAuth.has(chatId)) return ctx.reply('🔒 Admin access required. Use /password first.');
-
   const tickets = await db.getOpenTickets();
   if (!tickets.length) return ctx.reply('✅ No open tickets.');
 
@@ -95,9 +67,6 @@ bot.command('tickets', async (ctx) => {
 });
 
 bot.command('payments', async (ctx) => {
-  const chatId = ctx.chat.id;
-  if (!adminAuth.has(chatId)) return ctx.reply('🔒 Admin access required. Use /password first.');
-
   const orders = await db.getPendingPayments();
   if (!orders.length) return ctx.reply('✅ No pending payments.');
 
@@ -115,9 +84,6 @@ bot.command('payments', async (ctx) => {
 });
 
 bot.command('reply', async (ctx) => {
-  const chatId = ctx.chat.id;
-  if (!adminAuth.has(chatId)) return ctx.reply('🔒 Admin access required. Use /password first.');
-
   const parts = ctx.message.text.split(' ');
   if (parts.length < 3) return ctx.reply('Usage: /reply <ticket_id> <your message>');
 
@@ -145,9 +111,6 @@ bot.command('reply', async (ctx) => {
 });
 
 bot.command('close', async (ctx) => {
-  const chatId = ctx.chat.id;
-  if (!adminAuth.has(chatId)) return ctx.reply('🔒 Admin access required. Use /password first.');
-
   const parts = ctx.message.text.split(' ');
   if (parts.length < 2) return ctx.reply('Usage: /close <ticket_id>');
 
@@ -170,9 +133,6 @@ bot.command('close', async (ctx) => {
 });
 
 bot.command('activate', async (ctx) => {
-  const adminId = ctx.chat.id;
-  if (!adminAuth.has(adminId)) return ctx.reply('🔒 Admin access required. Use /password first.');
-
   const parts = ctx.message.text.split(' ');
   if (parts.length < 3) return ctx.reply('Usage: /activate <ticket_id|order_ref> <plan>\nPlans: monthly (30d), yearly (365d)\n\nExamples:\n/activate 5 monthly   — via ticket #5\n/activate BG-A7X3K monthly — via payment order');
 
@@ -203,7 +163,7 @@ bot.command('activate', async (ctx) => {
       if (!ticket) return ctx.reply('❌ Ticket not found');
       if (ticket.status === 'closed') return ctx.reply('❌ Ticket is already closed');
 
-      const result = await db.activatePremiumByAdmin(ticket.chat_id, plan, ticketId, adminId);
+      const result = await db.activatePremiumByAdmin(ticket.chat_id, plan, ticketId, ctx.chat.id);
       userChatId = result.chat_id;
       sourceInfo = `🎫 Ticket #${ticketId}`;
     }
@@ -226,8 +186,6 @@ bot.command('activate', async (ctx) => {
 });
 
 bot.command('debug', async (ctx) => {
-  if (!adminAuth.has(ctx.chat.id)) return ctx.reply('🔒 /password first');
-
   const vars = [
     ['ADMIN_BOT_TOKEN', !!config.ADMIN_BOT_TOKEN],
     ['DATABASE_URL', !!process.env.DATABASE_URL],
