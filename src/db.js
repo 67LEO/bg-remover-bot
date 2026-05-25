@@ -261,6 +261,10 @@ async function attachScreenshot(orderRef, fileId) {
   await query('UPDATE payment_orders SET screenshot_file_id = $1 WHERE order_ref = $2', [fileId, orderRef]);
 }
 
+async function cancelPaymentOrder(orderRef) {
+  await query("UPDATE payment_orders SET status = 'cancelled' WHERE order_ref = $1", [orderRef]);
+}
+
 async function confirmPaymentOrder(orderRef, plan) {
   const order = await getPaymentOrderByRef(orderRef);
   if (!order) throw new Error('Order not found');
@@ -291,4 +295,4 @@ async function confirmPaymentOrder(orderRef, plan) {
 
 init();
 
-module.exports = { upsertUser, getUsage, incrementUsage, logImage, addReferral, getReferralCount, getUserStats, getAllUsers, getTotalStats, getDailyActiveCount, createTicket, getOpenTickets, getTicketById, replyTicket, closeTicket, activatePremiumByAdmin, getUserSubscriptions, createPaymentOrder, getPaymentOrderByRef, getPendingPayments, attachScreenshot, confirmPaymentOrder };
+module.exports = { upsertUser, getUsage, incrementUsage, logImage, addReferral, getReferralCount, getUserStats, getAllUsers, getTotalStats, getDailyActiveCount, createTicket, getOpenTickets, getTicketById, replyTicket, closeTicket, activatePremiumByAdmin, getUserSubscriptions, createPaymentOrder, getPaymentOrderByRef, getPendingPayments, attachScreenshot, cancelPaymentOrder, confirmPaymentOrder };

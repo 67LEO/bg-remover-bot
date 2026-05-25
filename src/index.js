@@ -251,8 +251,13 @@ async function handleBuyPlan(ctx, plan) {
 
 bot.command('cancel', async (ctx) => {
   if (pendingPayment.has(ctx.chat.id)) {
+    const order = pendingPayment.get(ctx.chat.id);
+    await db.cancelPaymentOrder(order.orderRef);
     pendingPayment.delete(ctx.chat.id);
     await ctx.reply('✅ Payment cancelled. Type /premium anytime to buy again.');
+
+    const displayName = ctx.chat.first_name || ctx.chat.username || `User ${ctx.chat.id}`;
+    sendNotification(`❌ *Order Cancelled*\n\n👤 ${displayName}\n🔖 ${order.orderRef}\n💰 ${order.plan}`);
   } else {
     await ctx.reply('No pending payment to cancel.');
   }
