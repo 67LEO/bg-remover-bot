@@ -167,6 +167,9 @@ bot.command('support', async (ctx) => {
   try {
     const ticketId = await db.createTicket(chatId, text);
     await ctx.reply(`✅ *Ticket #${ticketId} submitted!*\n\nOur team will review your query and get back to you soon.`, { parse_mode: 'Markdown' });
+
+    const displayName = name || username || `User ${chatId}`;
+    sendNotification(`📩 *New Support Ticket #${ticketId}*\n\n👤 ${displayName}\n💬 \`${text.substring(0, 200)}\``);
   } catch (err) {
     await ctx.reply('❌ Error submitting ticket. Please try again later.');
   }
@@ -222,6 +225,9 @@ async function handleBuyPlan(ctx, plan) {
       `📸 *After payment, send the screenshot here*`,
       { parse_mode: 'Markdown' }
     );
+
+    const displayName = name || username || `User ${chatId}`;
+    sendNotification(`🆕 *New Payment Order*\n\n👤 ${displayName}\n💰 ${planInfo.label} — ₹${planInfo.price}\n🔖 ${orderRef}`);
   } catch (err) {
     await ctx.editMessageText('❌ Error creating order. Please try /premium again.');
   }
@@ -229,6 +235,12 @@ async function handleBuyPlan(ctx, plan) {
 
 const userMode = new Map();
 const pendingPayment = new Map();
+
+function sendNotification(msg) {
+  if (adminBot && config.ADMIN_CHAT_ID) {
+    adminBot.telegram.sendMessage(config.ADMIN_CHAT_ID, msg, { parse_mode: 'Markdown' }).catch(() => {});
+  }
+}
 
 function escMd(t) {
   return t.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
@@ -272,6 +284,9 @@ bot.on('photo', async (ctx) => {
     pendingPayment.delete(chatId);
 
     await ctx.reply('✅ Payment screenshot received! Admin will verify soon.\n\nYou can check your status via /stats');
+
+    const displayName = name || username || `User ${chatId}`;
+    sendNotification(`📸 *New Payment Screenshot*\n\n👤 ${displayName}\n🔖 Ref: ${order.orderRef}\n💰 ${order.plan}\n\nUse \`/activate ${order.orderRef} ${order.plan}\` to confirm.`);
     return;
   }
 
