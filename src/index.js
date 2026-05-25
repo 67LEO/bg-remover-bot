@@ -211,7 +211,7 @@ bot.on('photo', async (ctx) => {
       resultBuffer = await getUpscale(imageBuffer);
       await db.logImage(chatId, imageBuffer.length, resultBuffer.length);
       await ctx.replyWithDocument(
-        { source: resultBuffer, filename: 'hd-result.jpg' },
+        { source: resultBuffer, filename: 'hd-result.png' },
         {
           caption: userStats?.isPremium
             ? '✨ 4x HD Upscale done! (Unlimited)\n\nShare & earn rewards! /share'

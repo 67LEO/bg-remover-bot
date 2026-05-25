@@ -34,7 +34,7 @@ async function getUpscale(imageBuffer, scale = 2) {
   };
 
   addFile('imageFile', 'image.jpg', imageBuffer, 'image/jpeg');
-  addField('creativity', '0.5');
+  addField('creativity', '0');
   addField('scale', String(scale));
 
   parts.push(enc('--' + boundary + '--\r\n'));
