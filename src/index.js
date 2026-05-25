@@ -256,6 +256,44 @@ bot.command('close', async (ctx) => {
   } catch {}
 });
 
+bot.command('activate', async (ctx) => {
+  const chatId = ctx.chat.id;
+  if (!adminAuth.has(chatId)) return ctx.reply('🔒 Admin access required. Use /password first.');
+
+  const parts = ctx.message.text.split(' ');
+  if (parts.length < 3) return ctx.reply('Usage: /activate <ticket_id> <plan>\nPlans: monthly (30d), yearly (365d)');
+
+  const ticketId = parseInt(parts[1]);
+  const plan = parts[2]?.toLowerCase();
+
+  if (isNaN(ticketId)) return ctx.reply('❌ Invalid ticket ID');
+  if (plan !== 'monthly' && plan !== 'yearly') return ctx.reply('❌ Invalid plan. Use: monthly or yearly');
+
+  const ticket = await db.getTicketById(ticketId);
+  if (!ticket) return ctx.reply('❌ Ticket not found');
+  if (ticket.status === 'closed') return ctx.reply('❌ Ticket is already closed');
+
+  try {
+    const { days } = await db.activatePremiumByAdmin(ticket.chat_id, plan, ticketId, chatId);
+    const planLabel = plan === 'monthly' ? 'Monthly' : 'Yearly';
+
+    await ctx.replyWithMarkdown(
+      `✅ *Premium Activated!*\n\n👤 Ticket #${ticketId}\n📆 Plan: ${planLabel} (${days} days)\n✅ Ticket closed.`
+    );
+
+    await ctx.telegram.sendMessage(
+      ticket.chat_id,
+      `🎉 *Congratulations!* 🎉\n\nYour *${planLabel} Premium* plan has been activated!\n📆 Duration: *${days} days unlimited*\n\n✨ No daily limits anymore!\n🔹 /stats — Check your status\n🔹 /share — Earn more rewards\n\nThank you for your support! 🙏`,
+      { parse_mode: 'Markdown' }
+    ).catch(() => {
+      ctx.reply('⚠️ Premium activated but user may have blocked the bot.');
+    });
+  } catch (err) {
+    lastError = err.message;
+    await ctx.reply('❌ Error activating premium: ' + err.message.substring(0, 100));
+  }
+});
+
 const userMode = new Map();
 const adminAuth = new Set();
 const passwordFails = new Map();
