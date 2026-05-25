@@ -135,6 +135,13 @@ async function getUserStats(chatId) {
   const r = await query('SELECT * FROM users WHERE chat_id = $1', [chatId]);
   const user = r.rows[0];
   if (!user) return null;
+
+  if (user.is_premium && user.premium_until && new Date(user.premium_until) < new Date()) {
+    await deactivateUser(chatId);
+    user.is_premium = false;
+    user.premium_until = null;
+  }
+
   const dailyUsed = await getUsage(chatId);
   return {
     totalUses: user.total_uses,
@@ -293,6 +300,30 @@ async function confirmPaymentOrder(orderRef, plan) {
   return { chat_id: order.chat_id, days, expiresAt, ref: orderRef };
 }
 
+async function deactivateUser(chatId) {
+  await query(
+    "UPDATE users SET is_premium = false, premium_until = NULL WHERE chat_id = $1",
+    [chatId]
+  );
+  await query(
+    "UPDATE user_subscriptions SET active = false WHERE chat_id = $1 AND active = true",
+    [chatId]
+  );
+}
+
+async function getPremiumUsers() {
+  const r = await query(
+    `SELECT u.chat_id, u.first_name, u.username, u.premium_until,
+            s.plan, s.activated_by, s.ticket_id, p.order_ref, p.screenshot_file_id
+     FROM users u
+     LEFT JOIN user_subscriptions s ON s.chat_id = u.chat_id AND s.active = true
+     LEFT JOIN payment_orders p ON p.chat_id = u.chat_id AND p.status = 'confirmed'
+     WHERE u.is_premium = true
+     ORDER BY u.premium_until DESC NULLS LAST`
+  );
+  return r.rows;
+}
+
 init();
 
-module.exports = { upsertUser, getUsage, incrementUsage, logImage, addReferral, getReferralCount, getUserStats, getAllUsers, getTotalStats, getDailyActiveCount, createTicket, getOpenTickets, getTicketById, replyTicket, closeTicket, activatePremiumByAdmin, getUserSubscriptions, createPaymentOrder, getPaymentOrderByRef, getPendingPayments, attachScreenshot, cancelPaymentOrder, confirmPaymentOrder };
+module.exports = { upsertUser, getUsage, incrementUsage, logImage, addReferral, getReferralCount, getUserStats, getAllUsers, getTotalStats, getDailyActiveCount, createTicket, getOpenTickets, getTicketById, replyTicket, closeTicket, activatePremiumByAdmin, getUserSubscriptions, createPaymentOrder, getPaymentOrderByRef, getPendingPayments, attachScreenshot, cancelPaymentOrder, confirmPaymentOrder, deactivateUser, getPremiumUsers };
