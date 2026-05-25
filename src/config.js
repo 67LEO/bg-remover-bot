@@ -47,7 +47,7 @@ module.exports = {
   ADMIN_CHAT_ID: process.env.ADMIN_CHAT_ID ? Number(process.env.ADMIN_CHAT_ID) : null,
   ADMIN_BOT_TOKEN: process.env.ADMIN_BOT_TOKEN,
 
-  UPI_ID: process.env.UPI_ID || 'abc@fam',
+  UPI_ID: process.env.UPI_ID || '7435012637@fam',
   UPI_NAME: process.env.UPI_NAME || 'Mohit',
   PREMIUM_PLANS: {
     monthly: { label: 'Monthly', price: 49, days: 30 },
