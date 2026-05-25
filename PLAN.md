@@ -24,17 +24,24 @@
 
 ---
 
-## Phase 2 🔜 — Freemium (Next)
+## Phase 2 — Features Done ✅
+- [x] AI Upscale 4x HD (`/upscale`) — Photoroom serverless API
+- [x] AI Image Generation (`/imagine`) — Photoroom FLUX Pro
+- [x] Free limit increased to 10/day
+
+## Phase 3 🔜 — Freemium
 - [ ] Payment: Telegram Stars / UPI
 - [ ] Pro plan: ₹49/month (100/day, HD, AI Background, Upscale 2x)
 - [ ] Ultra plan: ₹99/month (Unlimited, 4K, AI Shadow, AI Fill)
-- [ ] AI Background replace
-- [ ] AI Upscale
+- [ ] AI Background replace (`/api/ai-background`)
+- [ ] AI Fill / Erase (inpainting via diffusion-backend)
+- [ ] AI Shadows
 - [ ] Auto grant referral rewards
+- [ ] Admin `/grant` command
 
 ---
 
-## Phase 3 🔜 — Scale
+## Phase 4 🔜 — Scale
 - [ ] Admin web dashboard
 - [ ] Revenue + analytics tracking
 - [ ] Response time monitoring
@@ -47,6 +54,8 @@
 | /start | Welcome + referral |
 | /help | Instructions + remaining tries |
 | /share | Referral link |
+| /upscale | 4x HD upscale |
+| /imagine | AI image generation (FLUX Pro) |
 | /stats | Your usage stats |
 | /admin | Bot analytics |
 | /password | Admin auth |
