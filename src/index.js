@@ -98,12 +98,25 @@ bot.command('upscale', async (ctx) => {
 
 bot.command('voice', async (ctx) => {
   const chatId = ctx.chat.id;
+  const { first_name: name, username } = ctx.chat;
+  await db.upsertUser(chatId, name, username);
+
+  const userStats = await db.getUserStats(chatId);
+  const dailyUsed = userStats?.dailyUsed ?? 0;
+  if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
+    return await ctx.replyWithMarkdown(
+      `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
+      '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
+      Markup.inlineKeyboard([[Markup.button.callback('⭐ Go Premium', 'buy_monthly')]])
+    );
+  }
+
   const rows = SUPPORTED_LANGUAGES.map(lang =>
     [Markup.button.callback(`${lang.native} (${lang.name})`, `voice_lang_${lang.code}`)]
   );
   voiceSession.set(chatId, { step: 'language' });
   await ctx.replyWithMarkdown(
-    '🎤 *Voice Generator*\n\nSelect a language 👇',
+    `🎤 *Voice Generator*\n\nFree today: *${dailyUsed}/${config.FREE_LIMIT_DAILY}*\n\nSelect a language 👇`,
     Markup.inlineKeyboard(rows)
   );
 });
@@ -249,7 +262,7 @@ bot.action(/voice_preview_(.+)/, async (ctx) => {
     const res = await fetch(voice.previewUrl);
     if (!res.ok) throw new Error('Download failed');
     const buf = Buffer.from(await res.arrayBuffer());
-    await ctx.replyWithVoice({ source: buf }, { caption: `🎧 ${voice.name} — preview` });
+    await ctx.replyWithVoice({ source: buf }, { caption: `🎧 ${voice.name} — preview`, reply_to_message_id: ctx.msg.message_id });
   } catch {
     await ctx.reply('❌ Could not load preview.');
   }
@@ -384,13 +397,27 @@ bot.on('text', async (ctx) => {
     const { first_name: name, username } = ctx.chat;
     await db.upsertUser(chatId, name, username);
 
+    const userStats = await db.getUserStats(chatId);
+    const dailyUsed = userStats?.dailyUsed ?? 0;
+    if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
+      voiceSession.delete(chatId);
+      return await ctx.replyWithMarkdown(
+        `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
+        '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
+        Markup.inlineKeyboard([[Markup.button.callback('⭐ Go Premium', 'buy_monthly')]])
+      );
+    }
+
     await ctx.reply(`🎤 Generating voice... (${text.length} chars)`);
 
     try {
       const audioBuf = await generateSpeech(session.voiceId, text, session.language);
+      await db.incrementUsage(chatId);
       await ctx.replyWithVoice(
         { source: audioBuf },
-        { caption: `🔊 ${session.voiceName}` }
+        { caption: userStats?.isPremium
+          ? `🔊 ${session.voiceName} (Unlimited)\n\nShare & earn rewards! /share`
+          : `🔊 ${session.voiceName} (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)\n\nUnlimited? /share` }
       );
       voiceSession.delete(chatId);
     } catch (err) {
