@@ -24,7 +24,7 @@ bot.start(async (ctx) => {
     '   /tickets — Open support tickets\n' +
     '   /payments — Pending payment orders\n' +
     '   /premiumusers — Active premium users\n' +
-    '   /deactivate <chat_id> — Remove premium\n' +
+    '   /deactivate `<chat_id>` — Remove premium\n' +
     '   /reply <id> <msg> — Reply to ticket\n' +
     '   /close <id> — Close ticket\n' +
     '   /activate <id|ref> <plan> — Activate premium\n' +
