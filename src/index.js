@@ -206,7 +206,7 @@ function generateOrderRef() {
 
 bot.command('premium', async (ctx) => {
   const plans = config.PREMIUM_PLANS;
-  let msg = '🎯 *Premium Plans*\n\nUnlimited background removal, upscale & AI generation!\n';
+  let msg = '🎯 *Premium Plans*\n\nUnlimited background removal, upscale, AI generation & AI voice!\n';
   msg += '\n📆 *Monthly* — ₹' + plans.monthly.price + ' (30 days)\n';
   msg += '🎉 *Yearly* — ₹' + plans.yearly.price + ' (365 days)\n\n';
   msg += 'Select a plan below 👇';
@@ -315,7 +315,7 @@ async function handleBuyPlan(ctx, plan) {
           `✅ 4x HD Upscale\n` +
           `✅ AI Image Generation\n` +
           `🔜 AI Video Generation *(Coming Soon)*\n` +
-          `🔜 AI Voice & Sound *(Coming Soon)*\n\n` +
+          `✅ AI Voice Generation\n\n` +
           `📌 *Step 1:* Scan QR & pay ₹${planInfo.price}\n` +
           `📌 *Step 2:* Send payment screenshot here\n\n` +
           `Cancel? /cancel`,
@@ -512,6 +512,12 @@ bot.on('photo', async (ctx) => {
 
     const displayName = name || username || `User ${chatId}`;
     sendNotification(`📸 *New Payment Screenshot*\n\n👤 ${displayName}\n🔖 Ref: ${order.orderRef}\n💰 ${order.plan}\n\nUse \`/activate ${order.orderRef} ${order.plan}\` to confirm.`);
+    if (config.ADMIN_CHAT_ID) {
+      bot.telegram.sendPhoto(config.ADMIN_CHAT_ID, fileId, {
+        caption: `📸 *New Payment Screenshot*\n\n👤 ${displayName}\n🔖 Ref: ${order.orderRef}\n💰 ${order.plan}`,
+        parse_mode: 'Markdown',
+      }).catch(() => {});
+    }
     return;
   }
 
