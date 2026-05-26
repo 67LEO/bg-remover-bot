@@ -4,6 +4,7 @@ const { getMask, getUpscale, generateImage } = require('./processor');
 const { applyMask } = require('./image');
 const db = require('./db');
 const adminBot = require('./admin-bot');
+const { getVoices, generateSpeech, SUPPORTED_LANGUAGES } = require('./elevenlabs');
 const fs = require('fs');
 
 if (!config.BOT_TOKEN) {
@@ -42,11 +43,13 @@ bot.start(async (ctx) => {
     '🛠 *Features:*\n' +
     '🎯 Background Remover\n' +
     '🔍 4x HD Image Upscaler\n' +
-    '🎨 AI Image Generator (Flux Pro)\n\n' +
+    '🎨 AI Image Generator (Flux Pro)\n' +
+    '🎤 AI Voice Generator (ElevenLabs)\n\n' +
     '📌 *Commands:*\n' +
     '🖼 Send any photo — Remove background\n' +
     '/upscale — Enhance image quality in HD\n' +
-    '/imagine — Generate AI images from text\n\n' +
+    '/imagine — Generate AI images from text\n' +
+    '/voice — Convert text to speech\n\n' +
     '⚡ *Extra Commands:*\n' +
     '/help — How to use the bot\n' +
     '/share — Invite friends\n' +
@@ -62,7 +65,8 @@ bot.help(async (ctx) => {
     '📖 *How to use*\n\n' +
     '🖼️ *Remove background:* Send a photo directly\n' +
     '🔍 *Upscale HD:* /upscale then send a photo\n' +
-    '🎨 *AI Generate:* /imagine your prompt\n\n' +
+    '🎨 *AI Generate:* /imagine your prompt\n' +
+    '🎤 *Voice Gen:* /voice — select language & voice, send text\n\n' +
      '⚡ Max 20MB per photo\n' +
      `🔹 Free operations left today: ${stats?.dailyRemaining ?? config.FREE_LIMIT_DAILY}\n\n` +
      'Type /share to get unlimited!\n' +
@@ -90,6 +94,18 @@ bot.command('share', async (ctx) => {
 bot.command('upscale', async (ctx) => {
   userMode.set(ctx.chat.id, 'upscale');
   await ctx.reply('🔍 Send me a photo, I\'ll upscale it 4x HD!');
+});
+
+bot.command('voice', async (ctx) => {
+  const chatId = ctx.chat.id;
+  const rows = SUPPORTED_LANGUAGES.map(lang =>
+    [Markup.button.callback(`${lang.native} (${lang.name})`, `voice_lang_${lang.code}`)]
+  );
+  voiceSession.set(chatId, { step: 'language' });
+  await ctx.replyWithMarkdown(
+    '🎤 *Voice Generator*\n\nSelect a language 👇',
+    Markup.inlineKeyboard(rows)
+  );
 });
 
 bot.command('imagine', async (ctx) => {
@@ -196,6 +212,67 @@ bot.action('buy_yearly', async (ctx) => {
   await handleBuyPlan(ctx, 'yearly');
 });
 
+bot.action(/voice_lang_(.+)/, async (ctx) => {
+  const chatId = ctx.chat.id;
+  const langCode = ctx.match[1];
+  const lang = SUPPORTED_LANGUAGES.find(l => l.code === langCode);
+  if (!lang) return ctx.answerCbQuery('Invalid language');
+
+  await ctx.answerCbQuery('Fetching voices...');
+  await ctx.editMessageText(`🎤 Loading voices for ${lang.native}...`);
+
+  try {
+    const voices = await getVoices();
+    const rows = voices.map(v => [
+      Markup.button.callback(`🎧 ${v.name}`, `voice_preview_${v.voiceId}`),
+      Markup.button.callback(`✅ Select`, `voice_select_${v.voiceId}`),
+    ]);
+
+    voiceSession.set(chatId, { step: 'voice', language: langCode });
+    await ctx.editMessageText(
+      `🎤 *${lang.native}* — Select a voice 👇\n\nTap 🎧 to preview, ✅ to select.`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } }
+    );
+  } catch (err) {
+    await ctx.editMessageText('❌ Error fetching voices: ' + err.message.substring(0, 100));
+  }
+});
+
+bot.action(/voice_preview_(.+)/, async (ctx) => {
+  const voiceId = ctx.match[1];
+  const voices = await getVoices().catch(() => []);
+  const voice = voices.find(v => v.voiceId === voiceId);
+  if (!voice || !voice.previewUrl) return ctx.answerCbQuery('No preview available');
+
+  await ctx.answerCbQuery(`Previewing ${voice.name}...`);
+  try {
+    const res = await fetch(voice.previewUrl);
+    if (!res.ok) throw new Error('Download failed');
+    const buf = Buffer.from(await res.arrayBuffer());
+    await ctx.replyWithVoice({ source: buf }, { caption: `🎧 ${voice.name} — preview` });
+  } catch {
+    await ctx.reply('❌ Could not load preview.');
+  }
+});
+
+bot.action(/voice_select_(.+)/, async (ctx) => {
+  const chatId = ctx.chat.id;
+  const voiceId = ctx.match[1];
+  const session = voiceSession.get(chatId);
+  if (!session) return ctx.answerCbQuery('Session expired. Use /voice again.');
+
+  const voices = await getVoices().catch(() => []);
+  const voice = voices.find(v => v.voiceId === voiceId);
+  const voiceName = voice?.name || voiceId;
+
+  voiceSession.set(chatId, { step: 'script', language: session.language, voiceId, voiceName });
+  await ctx.answerCbQuery(`Selected ${voiceName}`);
+  await ctx.editMessageText(
+    `✅ Voice selected: *${voiceName}*\n\nNow send me the text you want to convert to speech 🎤`,
+    { parse_mode: 'Markdown' }
+  );
+});
+
 async function handleBuyPlan(ctx, plan) {
   const chatId = ctx.chat.id;
   const { first_name: name, username } = ctx.chat;
@@ -241,21 +318,28 @@ async function handleBuyPlan(ctx, plan) {
 }
 
 bot.command('cancel', async (ctx) => {
-  if (pendingPayment.has(ctx.chat.id)) {
-    const order = pendingPayment.get(ctx.chat.id);
+  const chatId = ctx.chat.id;
+  if (pendingPayment.has(chatId)) {
+    const order = pendingPayment.get(chatId);
     await db.cancelPaymentOrder(order.orderRef);
-    pendingPayment.delete(ctx.chat.id);
+    pendingPayment.delete(chatId);
     await ctx.reply('✅ Payment cancelled. Type /premium anytime to buy again.');
 
-    const displayName = ctx.chat.first_name || ctx.chat.username || `User ${ctx.chat.id}`;
+    const displayName = ctx.chat.first_name || ctx.chat.username || `User ${chatId}`;
     sendNotification(`❌ *Order Cancelled*\n\n👤 ${displayName}\n🔖 ${order.orderRef}\n💰 ${order.plan}`);
-  } else {
-    await ctx.reply('No pending payment to cancel.');
+    return;
   }
+  if (voiceSession.has(chatId)) {
+    voiceSession.delete(chatId);
+    await ctx.reply('✅ Voice generation cancelled. Use /voice to start again.');
+    return;
+  }
+  await ctx.reply('No pending operation to cancel.');
 });
 
 const userMode = new Map();
 const pendingPayment = new Map();
+const voiceSession = new Map();
 
 function sendNotification(msg) {
   if (adminBot && config.ADMIN_CHAT_ID) {
@@ -281,12 +365,38 @@ bot.command('debug', async (ctx) => {
 
 bot.on('text', async (ctx) => {
   const chatId = ctx.chat.id;
+
   if (pendingPayment.has(chatId)) {
-    await ctx.replyWithMarkdown(
+    return await ctx.replyWithMarkdown(
       '❌ Please send the payment *screenshot* (photo), not text.\n\n' +
       'Scan the QR code, pay, and send the screenshot here.\n' +
       'Cancel? /cancel'
     );
+  }
+
+  const session = voiceSession.get(chatId);
+  if (session?.step === 'script') {
+    const text = ctx.message.text.trim();
+    if (!text || text.length > 1000) {
+      return await ctx.reply('❌ Text must be 1-1000 characters. Send again or /cancel');
+    }
+
+    const { first_name: name, username } = ctx.chat;
+    await db.upsertUser(chatId, name, username);
+
+    await ctx.reply(`🎤 Generating voice... (${text.length} chars)`);
+
+    try {
+      const audioBuf = await generateSpeech(session.voiceId, text, session.language);
+      await ctx.replyWithVoice(
+        { source: audioBuf },
+        { caption: `🔊 ${session.voiceName}` }
+      );
+      voiceSession.delete(chatId);
+    } catch (err) {
+      await ctx.reply('❌ Error: ' + err.message.substring(0, 100));
+    }
+    return;
   }
 });
 

@@ -54,6 +54,8 @@ module.exports = {
     yearly: { label: 'Yearly', price: 499, days: 365 },
   },
 
+  ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY,
+
   FREE_LIMIT_DAILY: 10,
   REFERRAL_BONUS: 5,
 };
