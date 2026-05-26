@@ -512,11 +512,18 @@ bot.on('photo', async (ctx) => {
 
     const displayName = name || username || `User ${chatId}`;
     sendNotification(`📸 *New Payment Screenshot*\n\n👤 ${displayName}\n🔖 Ref: ${order.orderRef}\n💰 ${order.plan}\n\nUse \`/activate ${order.orderRef} ${order.plan}\` to confirm.`);
-    if (config.ADMIN_CHAT_ID) {
-      bot.telegram.sendPhoto(config.ADMIN_CHAT_ID, fileId, {
-        caption: `📸 *New Payment Screenshot*\n\n👤 ${displayName}\n🔖 Ref: ${order.orderRef}\n💰 ${order.plan}`,
-        parse_mode: 'Markdown',
-      }).catch(() => {});
+    if (config.ADMIN_CHAT_ID && adminBot) {
+      try {
+        const fileLink = await ctx.telegram.getFileLink(fileId);
+        const res = await fetch(fileLink.href);
+        if (res.ok) {
+          const buf = Buffer.from(await res.arrayBuffer());
+          adminBot.telegram.sendPhoto(config.ADMIN_CHAT_ID, { source: buf }, {
+            caption: `📸 *New Payment Screenshot*\n\n👤 ${displayName}\n🔖 Ref: ${order.orderRef}\n💰 ${order.plan}`,
+            parse_mode: 'Markdown',
+          }).catch(() => {});
+        }
+      } catch {}
     }
     return;
   }
