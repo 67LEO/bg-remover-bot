@@ -91,11 +91,12 @@ bot.command('premiumusers', async (ctx) => {
 
   let msg = `👑 *Premium Users (${users.length})*\n\n`;
   users.slice(0, 20).forEach((u, i) => {
-    const name = u.first_name || u.username || `User ${u.chat_id}`;
+    const name = u.first_name || u.username || 'User';
     const plan = u.plan || '—';
     const expired = u.premium_until ? new Date(u.premium_until).toLocaleDateString() : 'Lifetime';
     const ref = u.order_ref || (u.ticket_id ? `Ticket #${u.ticket_id}` : '—');
     msg += `${i + 1}. ${name}\n`;
+    msg += `   🆔 \`${u.chat_id}\`\n`;
     msg += `   📆 ${plan} | Exp: ${expired}\n`;
     msg += `   🔖 ${ref}\n\n`;
   });
@@ -107,21 +108,27 @@ bot.command('premiumusers', async (ctx) => {
 
 bot.command('deactivate', async (ctx) => {
   const parts = ctx.message.text.split(' ');
-  if (parts.length < 2) return ctx.reply('Usage: /deactivate <chat_id>');
+  if (parts.length < 2) return ctx.reply('Usage: /deactivate <chat_id>\n\nTo find chat_id, use /premiumusers');
 
-  const targetId = parseInt(parts[1]);
-  if (isNaN(targetId)) return ctx.reply('❌ Invalid chat ID');
-
-  await db.deactivateUser(targetId);
-  await ctx.reply(`✅ Premium deactivated for \`${targetId}\``);
+  const rawId = parts[1].trim();
+  const targetId = parseInt(rawId);
+  if (isNaN(targetId)) return ctx.reply(`❌ Invalid chat ID: \`${rawId}\`\n\nUse /premiumusers to see user IDs.`);
 
   try {
-    await mainBot.telegram.sendMessage(
-      targetId,
-      `ℹ️ Your premium plan has ended. Thanks for your support!\n\nGet premium again? /premium`,
-      { parse_mode: 'Markdown' }
-    );
-  } catch {}
+    await db.deactivateUser(targetId);
+    await ctx.reply(`✅ Premium deactivated for \`${targetId}\``);
+
+    try {
+      await mainBot.telegram.sendMessage(
+        targetId,
+        `ℹ️ Your premium plan has ended. Thanks for your support!\n\nGet premium again? /premium`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch {}
+  } catch (err) {
+    lastError = err.message;
+    await ctx.reply('❌ Error deactivating: ' + err.message.substring(0, 100));
+  }
 });
 
 bot.command('reply', async (ctx) => {
