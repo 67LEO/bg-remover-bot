@@ -37,25 +37,26 @@ bot.start(async (ctx) => {
     } catch {}
   }
 
+  const isHindi = ctx.chat.type === 'private' && ctx.message.text.includes('hindi');
   await ctx.replyWithMarkdown(
-    '👋 *Welcome to the Ultimate AI Editing Bot* ✨\n\n' +
-    'Transform your images instantly with powerful AI tools 🚀\n\n' +
-    '🛠 *Features:*\n' +
-    '🎯 Background Remover\n' +
-    '🔍 4x HD Image Upscaler\n' +
+    '👋 *Welcome to AI Image Editor Bot* 🇮🇳\n\n' +
+    '✨ *Features:*\n' +
+    '🎯 Background Remover — one click\n' +
+    '🔍 4x HD Upscaler\n' +
     '🎨 AI Image Generator (Flux Pro)\n' +
     '🎤 AI Voice Generator (ElevenLabs)\n\n' +
     '📌 *Commands:*\n' +
-    '🖼 Send any photo — Remove background\n' +
-    '/upscale — Enhance image quality in HD\n' +
-    '/imagine — Generate AI images from text\n' +
-    '/voice — Convert text to speech\n\n' +
-    '⚡ *Extra Commands:*\n' +
-    '/help — How to use the bot\n' +
-    '/share — Invite friends\n' +
-    '/stats — Check your usage\n' +
-    '/support — Contact support\n\n' +
-    'Create stunning images in seconds with AI 🤖'
+    '🖼 Send photo → Remove background\n' +
+    '/upscale — 4x HD quality\n' +
+    '/imagine — AI image from text\n' +
+    '/voice — Text to speech\n\n' +
+    '⚡ /help • /share • /stats • /support • /premium\n\n' +
+    '👇 *हिन्दी में:*\n' +
+    'कोई भी फोटो भेजें → बैकग्राउंड हटेगा 🖼️\n' +
+    '/upscale — फोटो को HD बनाएं\n' +
+    '/imagine — टेक्स्ट से AI इमेज\n' +
+    '/voice — टेक्स्ट को आवाज़ में बदलें\n\n' +
+    'सब कुछ मुफ़्त! बस /share से unlimited पाएं 🚀'
   );
 });
 
@@ -67,27 +68,33 @@ bot.help(async (ctx) => {
     '🔍 *Upscale HD:* /upscale then send a photo\n' +
     '🎨 *AI Generate:* /imagine your prompt\n' +
     '🎤 *Voice Gen:* /voice — select language & voice, send text\n\n' +
+    '🤝 *Share:* Use @AiBgRemover_Bot in any chat\n\n' +
      '⚡ Max 20MB per photo\n' +
      `🔹 Free operations left today: ${stats?.dailyRemaining ?? config.FREE_LIMIT_DAILY}\n\n` +
      'Type /share to get unlimited!\n' +
-     '💬 Need help? /support'
+     '💬 Need help? /support',
+     stats?.dailyRemaining !== undefined ? shareButton(ctx.chat.id) : undefined
   );
 });
 
 bot.command('share', async (ctx) => {
   const chatId = ctx.chat.id;
-  const botUsername = ctx.botInfo?.username || 'BgRemoverBot';
+  const botUsername = ctx.botInfo?.username || process.env.BOT_USERNAME || 'AiBgRemover_Bot';
   const count = await db.getReferralCount(chatId);
   await ctx.replyWithMarkdown(
     '🤝 *Share & Earn Unlimited Usage!*\n\n' +
     `You've referred *${count} friends* so far!\n\n` +
-    'Share this link:\n' +
+    '🔗 *Your referral link:*\n' +
     `\`https://t.me/${botUsername}?start=${chatId}\`\n\n` +
     '🎁 *Rewards:*\n' +
     '• 3 friends → +7 days unlimited\n' +
     '• 5 friends → +1 month unlimited\n' +
     '• 10 friends → +3 months unlimited\n\n' +
-    'Start sharing! 🚀'
+    'Tap 👇 to share with friends!',
+    Markup.inlineKeyboard([
+      [Markup.button.switchToChat('📤 Share with Friends', `Try @${botUsername} — AI image editor: remove bg, upscale, generate images & voice 🚀`)],
+      [Markup.button.url('📋 Copy Link', `https://t.me/${botUsername}?start=${chatId}`)],
+    ])
   );
 });
 
@@ -107,7 +114,10 @@ bot.command('voice', async (ctx) => {
     return await ctx.replyWithMarkdown(
       `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
       '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
-      Markup.inlineKeyboard([[Markup.button.callback('⭐ Go Premium', 'buy_monthly')]])
+      Markup.inlineKeyboard([
+        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images & voice 🚀`)],
+        [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
+      ])
     );
   }
 
@@ -144,7 +154,10 @@ bot.command('imagine', async (ctx) => {
     return await ctx.replyWithMarkdown(
       `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
       '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
-      Markup.inlineKeyboard([[Markup.button.callback('⭐ Go Premium', 'buy_monthly')]])
+      Markup.inlineKeyboard([
+        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images & voice 🚀`)],
+        [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
+      ])
     );
   }
 
@@ -364,6 +377,14 @@ function escMd(t) {
   return t.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
 }
 
+function shareButton(chatId) {
+  const botUsername = process.env.BOT_USERNAME || 'AiBgRemover_Bot';
+  return Markup.inlineKeyboard([
+    [Markup.button.switchToChat('📤 Share with Friends', `Try @${botUsername} — AI image editor bot 🚀`)],
+    [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
+  ]);
+}
+
 bot.command('debug', async (ctx) => {
   const vars = [
     ['BOT_TOKEN', !!config.BOT_TOKEN],
@@ -374,6 +395,21 @@ bot.command('debug', async (ctx) => {
   vars.forEach(([k, v]) => msg += `${escMd(k)}: ${v ? '✅' : '❌'}\n`);
   msg += `\nNode: ${escMd(process.version)}`;
   await ctx.reply(msg, { parse_mode: 'MarkdownV2' });
+});
+
+bot.on('my_chat_member', async (ctx) => {
+  if (ctx.chat.type === 'group' || ctx.chat.type === 'supergroup') {
+    const status = ctx.myChatMember.new_chat_member.status;
+    if (status === 'member' || status === 'administrator') {
+      await ctx.replyWithMarkdown(
+        '👋 *Thanks for adding me!*\n\n' +
+        'Send any photo to remove background 🖼️\n' +
+        'Or type /help to see all features\n\n' +
+        'Made with ❤️ in India',
+        shareButton(ctx.chat.id)
+      );
+    }
+  }
 });
 
 bot.on('text', async (ctx) => {
@@ -404,7 +440,10 @@ bot.on('text', async (ctx) => {
       return await ctx.replyWithMarkdown(
         `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
         '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
-        Markup.inlineKeyboard([[Markup.button.callback('⭐ Go Premium', 'buy_monthly')]])
+        Markup.inlineKeyboard([
+          [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images & voice 🚀`)],
+          [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
+        ])
       );
     }
 
@@ -416,8 +455,9 @@ bot.on('text', async (ctx) => {
       await ctx.replyWithVoice(
         { source: audioBuf },
         { caption: userStats?.isPremium
-          ? `🔊 ${session.voiceName} (Unlimited)\n\nShare & earn rewards! /share`
-          : `🔊 ${session.voiceName} (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)\n\nUnlimited? /share` }
+          ? `🔊 ${session.voiceName} (Unlimited)`
+          : `🔊 ${session.voiceName} (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`,
+          reply_markup: shareButton(chatId).reply_markup }
       );
       voiceSession.delete(chatId);
     } catch (err) {
@@ -446,8 +486,9 @@ async function processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, p
         { source: resultBuffer, filename: 'hd-result.png' },
         {
           caption: userStats?.isPremium
-            ? '✨ 4x HD Upscale done! (Unlimited)\n\nShare & earn rewards! /share'
-            : `✨ 4x HD Upscale done! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)\n\nUnlimited? /share`,
+            ? '✨ 4x HD Upscale done! (Unlimited)'
+            : `✨ 4x HD Upscale done! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`,
+          reply_markup: shareButton(chatId).reply_markup,
         }
       );
     } else {
@@ -459,8 +500,9 @@ async function processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, p
         { source: resultBuffer, filename: 'result.png' },
         {
           caption: userStats?.isPremium
-            ? '✨ Background removed! (Unlimited)\n\nShare & earn rewards! /share'
-            : `✨ Background removed! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)\n\nUnlimited? /share`,
+            ? '✨ Background removed! (Unlimited)'
+            : `✨ Background removed! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`,
+          reply_markup: shareButton(chatId).reply_markup,
         }
       );
     }
@@ -482,8 +524,9 @@ async function generateImageAsync(ctx, chatId, text, userStats, dailyUsed, msg) 
       chatId,
       { source: imgBuf },
       { caption: userStats?.isPremium
-          ? '✨ AI Generated! (Unlimited)\n\nShare & earn rewards! /share'
-          : `✨ AI Generated! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)\n\nUnlimited? /share` }
+          ? '✨ AI Generated! (Unlimited)'
+          : `✨ AI Generated! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`,
+        reply_markup: shareButton(chatId).reply_markup }
     );
     await db.incrementUsage(chatId);
   } catch (err) {
@@ -494,6 +537,67 @@ async function generateImageAsync(ctx, chatId, text, userStats, dailyUsed, msg) 
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
   }
 }
+
+bot.on('inline_query', async (ctx) => {
+  const query = ctx.inlineQuery.query.trim();
+  const results = [
+    {
+      type: 'article',
+      id: 'share',
+      title: '📤 Share this bot with friends',
+      description: 'AI Background Remover, Upscaler, Image & Voice Generator',
+      input_message_content: {
+        message_text: '🤖 *AI Image Editor Bot* — Remove bg, upscale, generate images & voice!\n\nSend me a photo or type /help to start 👇',
+        parse_mode: 'Markdown',
+      },
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '🚀 Open Bot', url: 'https://t.me/' + (process.env.BOT_USERNAME || 'AiBgRemover_Bot') }
+        ]]
+      }
+    },
+    {
+      type: 'article',
+      id: 'features',
+      title: '✨ Features',
+      description: 'Background removal • 4x HD Upscale • AI Image Gen • Voice Gen',
+      input_message_content: {
+        message_text: '🎯 *AI Image Editor Bot Features*\n\n🖼️ Send photo → Remove background instantly\n🔍 /upscale — 4x HD quality boost\n🎨 /imagine — Generate AI images\n🎤 /voice — Text to speech\n📊 /stats — Check usage\n\n🇮🇳 Made in India',
+        parse_mode: 'Markdown',
+      },
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '🚀 Open Bot', url: 'https://t.me/' + (process.env.BOT_USERNAME || 'AiBgRemover_Bot') }
+        ]]
+      }
+    },
+    {
+      type: 'article',
+      id: 'premium',
+      title: '⭐ Premium Plans',
+      description: 'Unlimited everything — ₹49/month, ₹499/year',
+      input_message_content: {
+        message_text: '⭐ *Premium Plans*\n\n📆 Monthly — ₹49 (30 days)\n🎉 Yearly — ₹499 (365 days)\n\nUnlimited background removal, upscale, AI generation & voice!\n\nType /premium in the bot to buy 👇',
+        parse_mode: 'Markdown',
+      },
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '🚀 Open Bot', url: 'https://t.me/' + (process.env.BOT_USERNAME || 'AiBgRemover_Bot') }
+        ]]
+      }
+    },
+  ];
+
+  if (query) {
+    const filtered = results.filter(r =>
+      r.title.toLowerCase().includes(query.toLowerCase()) ||
+      r.description.toLowerCase().includes(query.toLowerCase())
+    );
+    await ctx.answerInlineQuery(filtered.length ? filtered : results, { cache_time: 10 });
+  } else {
+    await ctx.answerInlineQuery(results, { cache_time: 10 });
+  }
+});
 
 bot.on('photo', async (ctx) => {
   const chatId = ctx.chat.id;
@@ -541,7 +645,10 @@ bot.on('photo', async (ctx) => {
     return await ctx.replyWithMarkdown(
       `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
       '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
-      Markup.inlineKeyboard([[Markup.button.callback('⭐ Go Premium', 'buy_monthly')]])
+      Markup.inlineKeyboard([
+        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images & voice 🚀`)],
+        [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
+      ])
     );
   }
 
