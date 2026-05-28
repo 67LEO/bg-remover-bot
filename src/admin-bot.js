@@ -22,17 +22,27 @@ bot.use((ctx, next) => {
 bot.start(async (ctx) => {
   await ctx.replyWithMarkdown(
     '🔐 *Admin Bot Ready*\n\n' +
-    '📋 *Commands:*\n' +
+    '🤖 *Main Bot Features:*\n' +
+    '   🖼️ Background Remover — send any photo\n' +
+    '   🔍 4x HD Upscale — /upscale then send photo\n' +
+    '   🎨 AI Image Gen — /imagine your prompt\n' +
+    '   🎤 AI Voice Gen — /voice (14 languages)\n' +
+    '   🎬 AI Video Gen — /video your prompt\n' +
+    '   📊 Referral: /share for unlimited free usage\n' +
+    '   💳 Premium: /premium (₹49/mo, ₹499/yr)\n\n' +
+    '📋 *Admin Commands:*\n' +
     '   /tickets — Open support tickets\n' +
     '   /payments — Pending payment orders\n' +
     '   /premiumusers — Active premium users\n' +
-    '   /deactivate `<chat_id>` — Remove premium\n' +
-    '   /reply <id> <msg> — Reply to ticket\n' +
-    '   /close <id> — Close ticket\n' +
-    '   /activate <id|ref> <plan> — Activate premium\n' +
     '   /users [page] — List all users\n' +
-    '   /send <chat_id> <msg> — DM a user\n' +
-    '   /broadcast <msg> — Send to all users\n' +
+    '   /send `<chat_id>` `<msg>` — DM any user\n' +
+    '   /broadcast `<msg>` — Send to all users\n' +
+    '   `/confirm_broadcast` — Confirm pending broadcast\n' +
+    '   `/cancel_broadcast` — Cancel pending broadcast\n' +
+    '   /activate `<id|ref>` `<plan>` — Activate premium\n' +
+    '   /deactivate `<chat_id>` — Remove premium\n' +
+    '   /reply `<id>` `<msg>` — Reply to ticket\n' +
+    '   /close `<id>` — Close ticket\n' +
     '   /admin — Bot analytics\n' +
     '   /debug — System status'
   );
