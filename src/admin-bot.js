@@ -353,7 +353,7 @@ bot.command('debug', async (ctx) => {
   vars.forEach(([k, v]) => msg += `${k}: ${v ? '✅' : '❌'}\n`);
   msg += `\nNode: ${process.version}`;
   if (lastError) msg += `\n\nLast error:\n${lastError.substring(0, 200)}`;
-  await ctx.reply(msg, { parse_mode: 'MarkdownV2' });
+  await ctx.reply(msg, { parse_mode: 'Markdown' });
 });
 
 module.exports = bot;
