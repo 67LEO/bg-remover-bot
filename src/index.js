@@ -5,6 +5,7 @@ const { applyMask } = require('./image');
 const db = require('./db');
 const adminBot = require('./admin-bot');
 const { getVoices, generateSpeech, SUPPORTED_LANGUAGES } = require('./elevenlabs');
+const { generateVideo } = require('./video');
 const fs = require('fs');
 
 if (!config.BOT_TOKEN) {
@@ -44,7 +45,8 @@ bot.start(async (ctx) => {
     '🎯 Background Remover — one click\n' +
     '🔍 4x HD Upscaler\n' +
     '🎨 AI Image Generator (Flux Pro)\n' +
-    '🎤 AI Voice Generator (ElevenLabs)\n\n' +
+    '🎤 AI Voice Generator (ElevenLabs)\n' +
+    '🎬 AI Video Generator\n\n' +
     '📌 *Commands:*\n' +
     '🖼 Send photo → Remove background\n' +
     '/upscale — 4x HD quality\n' +
@@ -67,7 +69,8 @@ bot.help(async (ctx) => {
     '🖼️ *Remove background:* Send a photo directly\n' +
     '🔍 *Upscale HD:* /upscale then send a photo\n' +
     '🎨 *AI Generate:* /imagine your prompt\n' +
-    '🎤 *Voice Gen:* /voice — select language & voice, send text\n\n' +
+    '🎤 *Voice Gen:* /voice — select language & voice, send text\n' +
+    '🎬 *Video Gen:* /video your prompt\n\n' +
     '🤝 *Share:* Use @AiBgRemover_Bot in any chat\n\n' +
      '⚡ Max 20MB per photo\n' +
      `🔹 Free operations left today: ${stats?.dailyRemaining ?? config.FREE_LIMIT_DAILY}\n\n` +
@@ -92,7 +95,8 @@ bot.command('share', async (ctx) => {
     '• 10 friends → +3 months unlimited\n\n' +
     'Tap 👇 to share with friends!',
     Markup.inlineKeyboard([
-      [Markup.button.switchToChat('📤 Share with Friends', `Try @${botUsername} — AI image editor: remove bg, upscale, generate images & voice 🚀`)],
+        [Markup.button.switchToChat('📤 Share with Friends', `Try @${botUsername} — AI image editor: remove bg, upscale, generate images, voice & video 🚀`)],
+        [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
       [Markup.button.url('📋 Copy Link', `https://t.me/${botUsername}?start=${chatId}`)],
     ])
   );
@@ -115,7 +119,7 @@ bot.command('voice', async (ctx) => {
       `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
       '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
       Markup.inlineKeyboard([
-        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images & voice 🚀`)],
+        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images, voice & video 🚀`)],
         [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
       ])
     );
@@ -155,7 +159,7 @@ bot.command('imagine', async (ctx) => {
       `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
       '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
       Markup.inlineKeyboard([
-        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images & voice 🚀`)],
+        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images, voice & video 🚀`)],
         [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
       ])
     );
@@ -165,6 +169,42 @@ bot.command('imagine', async (ctx) => {
 
   generateImageAsync(ctx, chatId, text, userStats, dailyUsed, msg)
     .catch(err => console.error('Background imagine error:', err.message));
+});
+
+bot.command('video', async (ctx) => {
+  const chatId = ctx.chat.id;
+  const text = ctx.message.text.slice('/video'.length).trim();
+  if (!text) {
+    return await ctx.replyWithMarkdown(
+      '🎬 *AI Video Generator*\n\n' +
+      'Usage: `/video <your prompt>`\n\n' +
+      'Example: `/video a cat playing piano in a garden`\n\n' +
+      `🔹 Free today: */${config.FREE_LIMIT_DAILY} operations*\n\n` +
+      'Powered by AI 🚀'
+    );
+  }
+
+  const { first_name: name, username } = ctx.chat;
+  await db.upsertUser(chatId, name, username);
+
+  const userStats = await db.getUserStats(chatId);
+  const dailyUsed = userStats?.dailyUsed ?? 0;
+
+  if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
+    return await ctx.replyWithMarkdown(
+      `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
+      '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
+      Markup.inlineKeyboard([
+        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images, voice & video 🚀`)],
+        [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
+      ])
+    );
+  }
+
+  const msg = await ctx.reply('🎬 Generating video... (may take 1-2 min)');
+
+  generateVideoAsync(ctx, chatId, text, userStats, dailyUsed, msg)
+    .catch(err => console.error('Background video error:', err.message));
 });
 
 bot.command('stats', async (ctx) => {
@@ -219,7 +259,7 @@ function generateOrderRef() {
 
 bot.command('premium', async (ctx) => {
   const plans = config.PREMIUM_PLANS;
-  let msg = '🎯 *Premium Plans*\n\nUnlimited background removal, upscale, AI generation & AI voice!\n';
+  let msg = '🎯 *Premium Plans*\n\nUnlimited background removal, upscale, AI generation, video & voice!\n';
   msg += '\n📆 *Monthly* — ₹' + plans.monthly.price + ' (30 days)\n';
   msg += '🎉 *Yearly* — ₹' + plans.yearly.price + ' (365 days)\n\n';
   msg += 'Select a plan below 👇';
@@ -327,7 +367,7 @@ async function handleBuyPlan(ctx, plan) {
           `✅ Unlimited background removal\n` +
           `✅ 4x HD Upscale\n` +
           `✅ AI Image Generation\n` +
-          `🔜 AI Video Generation *(Coming Soon)*\n` +
+          `✅ AI Video Generation\n` +
           `✅ AI Voice Generation\n\n` +
           `📌 *Step 1:* Scan QR & pay ₹${planInfo.price}\n` +
           `📌 *Step 2:* Send payment screenshot here\n\n` +
@@ -441,7 +481,7 @@ bot.on('text', async (ctx) => {
         `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
         '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
         Markup.inlineKeyboard([
-          [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images & voice 🚀`)],
+          [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images, voice & video 🚀`)],
           [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
         ])
       );
@@ -538,6 +578,31 @@ async function generateImageAsync(ctx, chatId, text, userStats, dailyUsed, msg) 
   }
 }
 
+async function generateVideoAsync(ctx, chatId, text, userStats, dailyUsed, msg) {
+  try {
+    const result = await generateVideo(text);
+    const res = await fetch(result.url);
+    if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+
+    await ctx.telegram.sendVideo(
+      chatId,
+      { source: buf, filename: 'video.mp4' },
+      { caption: userStats?.isPremium
+          ? '🎬 AI Video Generated! (Unlimited)'
+          : `🎬 AI Video Generated! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`,
+        reply_markup: shareButton(chatId).reply_markup }
+    );
+    await db.incrementUsage(chatId);
+  } catch (err) {
+    console.error('=== VIDEO ERROR ===');
+    console.error('Message:', err.message);
+    await ctx.telegram.sendMessage(chatId, '❌ Error: ' + err.message.substring(0, 100));
+  } finally {
+    await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
+  }
+}
+
 bot.on('inline_query', async (ctx) => {
   const query = ctx.inlineQuery.query.trim();
   const results = [
@@ -545,7 +610,7 @@ bot.on('inline_query', async (ctx) => {
       type: 'article',
       id: 'share',
       title: '📤 Share this bot with friends',
-      description: 'AI Background Remover, Upscaler, Image & Voice Generator',
+      description: 'AI Background Remover, Upscaler, Image, Voice & Video Generator',
       input_message_content: {
         message_text: '🤖 *AI Image Editor Bot* — Remove bg, upscale, generate images & voice!\n\nSend me a photo or type /help to start 👇',
         parse_mode: 'Markdown',
@@ -560,9 +625,9 @@ bot.on('inline_query', async (ctx) => {
       type: 'article',
       id: 'features',
       title: '✨ Features',
-      description: 'Background removal • 4x HD Upscale • AI Image Gen • Voice Gen',
+      description: 'Background removal • 4x HD Upscale • AI Image • Voice • Video Gen',
       input_message_content: {
-        message_text: '🎯 *AI Image Editor Bot Features*\n\n🖼️ Send photo → Remove background instantly\n🔍 /upscale — 4x HD quality boost\n🎨 /imagine — Generate AI images\n🎤 /voice — Text to speech\n📊 /stats — Check usage\n\n🇮🇳 Made in India',
+        message_text: '🎯 *AI Image Editor Bot Features*\n\n🖼️ Send photo → Remove background instantly\n🔍 /upscale — 4x HD quality boost\n🎨 /imagine — Generate AI images\n🎤 /voice — Text to speech\n🎬 /video — AI video generation\n📊 /stats — Check usage\n\n🇮🇳 Made in India',
         parse_mode: 'Markdown',
       },
       reply_markup: {
@@ -577,7 +642,7 @@ bot.on('inline_query', async (ctx) => {
       title: '⭐ Premium Plans',
       description: 'Unlimited everything — ₹49/month, ₹499/year',
       input_message_content: {
-        message_text: '⭐ *Premium Plans*\n\n📆 Monthly — ₹49 (30 days)\n🎉 Yearly — ₹499 (365 days)\n\nUnlimited background removal, upscale, AI generation & voice!\n\nType /premium in the bot to buy 👇',
+        message_text: '⭐ *Premium Plans*\n\n📆 Monthly — ₹49 (30 days)\n🎉 Yearly — ₹499 (365 days)\n\nUnlimited background removal, upscale, AI generation, video & voice!\n\nType /premium in the bot to buy 👇',
         parse_mode: 'Markdown',
       },
       reply_markup: {
@@ -646,7 +711,7 @@ bot.on('photo', async (ctx) => {
       `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
       '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
       Markup.inlineKeyboard([
-        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images & voice 🚀`)],
+        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images, voice & video 🚀`)],
         [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
       ])
     );

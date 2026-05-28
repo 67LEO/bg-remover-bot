@@ -311,6 +311,11 @@ async function deactivateUser(chatId) {
   );
 }
 
+async function getUserCount() {
+  const r = await query('SELECT COUNT(*) as count FROM users');
+  return parseInt(r.rows[0]?.count || '0');
+}
+
 async function getPremiumUsers() {
   const r = await query(
     `SELECT u.chat_id, u.first_name, u.username, u.premium_until,
@@ -326,4 +331,4 @@ async function getPremiumUsers() {
 
 init();
 
-module.exports = { upsertUser, getUsage, incrementUsage, logImage, addReferral, getReferralCount, getUserStats, getAllUsers, getTotalStats, getDailyActiveCount, createTicket, getOpenTickets, getTicketById, replyTicket, closeTicket, activatePremiumByAdmin, getUserSubscriptions, createPaymentOrder, getPaymentOrderByRef, getPendingPayments, attachScreenshot, cancelPaymentOrder, confirmPaymentOrder, deactivateUser, getPremiumUsers };
+module.exports = { upsertUser, getUsage, incrementUsage, logImage, addReferral, getReferralCount, getUserStats, getAllUsers, getUserCount, getTotalStats, getDailyActiveCount, createTicket, getOpenTickets, getTicketById, replyTicket, closeTicket, activatePremiumByAdmin, getUserSubscriptions, createPaymentOrder, getPaymentOrderByRef, getPendingPayments, attachScreenshot, cancelPaymentOrder, confirmPaymentOrder, deactivateUser, getPremiumUsers };

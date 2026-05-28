@@ -13,6 +13,8 @@ const mainBot = new Telegraf(config.BOT_TOKEN);
 const ADMIN_ID = config.ADMIN_CHAT_ID;
 let lastError = null;
 
+const broadcastPending = new Map();
+
 bot.use((ctx, next) => {
   if (ctx.chat.id === ADMIN_ID) return next();
 });
@@ -28,6 +30,9 @@ bot.start(async (ctx) => {
     '   /reply <id> <msg> — Reply to ticket\n' +
     '   /close <id> — Close ticket\n' +
     '   /activate <id|ref> <plan> — Activate premium\n' +
+    '   /users [page] — List all users\n' +
+    '   /send <chat_id> <msg> — DM a user\n' +
+    '   /broadcast <msg> — Send to all users\n' +
     '   /admin — Bot analytics\n' +
     '   /debug — System status'
   );
@@ -104,6 +109,102 @@ bot.command('premiumusers', async (ctx) => {
   msg += 'Use `/deactivate <chat_id>` to remove premium';
 
   await ctx.replyWithMarkdown(msg);
+});
+
+bot.command('users', async (ctx) => {
+  const parts = ctx.message.text.split(' ');
+  const page = Math.max(1, parseInt(parts[1]) || 1);
+  const perPage = 10;
+
+  const allUsers = await db.getAllUsers();
+  const total = allUsers.length;
+  const totalPages = Math.ceil(total / perPage) || 1;
+  const start = (page - 1) * perPage;
+  const slice = allUsers.slice(start, start + perPage);
+
+  let msg = `👥 *Users (Page ${page}/${totalPages})* — Total: ${total}\n\n`;
+  slice.forEach((u, i) => {
+    const name = u.first_name || u.username || 'User';
+    const premium = u.is_premium ? ' 👑' : '';
+    msg += `${start + i + 1}. ${name}\n   🆔 \`${u.chat_id}\` — ${u.total_uses} uses${premium}\n\n`;
+  });
+
+  if (page < totalPages) msg += `Next: /users ${page + 1}`;
+  await ctx.replyWithMarkdown(msg);
+});
+
+bot.command('send', async (ctx) => {
+  const parts = ctx.message.text.split(' ');
+  if (parts.length < 3) return ctx.reply('Usage: /send <chat_id> <message>');
+
+  const rawId = parts[1].trim();
+  const targetId = parseInt(rawId);
+  if (isNaN(targetId)) return ctx.reply(`❌ Invalid chat ID: \`${rawId}\``);
+
+  const text = parts.slice(2).join(' ').trim();
+  if (!text) return ctx.reply('❌ Message cannot be empty');
+
+  try {
+    await mainBot.telegram.sendMessage(targetId, text, { parse_mode: 'Markdown' });
+    await ctx.replyWithMarkdown(`✅ Message sent to \`${targetId}\``);
+  } catch (err) {
+    lastError = err.message;
+    await ctx.replyWithMarkdown(`❌ Failed: \`${err.message.substring(0, 100)}\``);
+  }
+});
+
+bot.command('broadcast', async (ctx) => {
+  const text = ctx.message.text.slice('/broadcast'.length).trim();
+  if (!text) return ctx.reply('Usage: /broadcast <message>');
+
+  const allUsers = await db.getAllUsers();
+  const total = allUsers.length;
+
+  broadcastPending.set('message', text);
+  broadcastPending.set('userCount', total);
+
+  await ctx.replyWithMarkdown(
+    `📢 *Broadcast Preview*\n\nMessage:\n${text.substring(0, 200)}\n\nWill send to *${total} users*\n\nType \`/confirm_broadcast\` to proceed or \`/cancel_broadcast\` to abort.`
+  );
+});
+
+bot.command('confirm_broadcast', async (ctx) => {
+  if (!broadcastPending.has('message')) {
+    return ctx.reply('❌ No pending broadcast. Use /broadcast first.');
+  }
+
+  const msg = broadcastPending.get('message');
+  const allUsers = await db.getAllUsers();
+  const total = allUsers.length;
+
+  await ctx.reply(`📢 Broadcasting to ${total} users...`);
+
+  let sent = 0;
+  let failed = 0;
+
+  for (const user of allUsers) {
+    try {
+      await mainBot.telegram.sendMessage(user.chat_id, msg, { parse_mode: 'Markdown' });
+      sent++;
+      await new Promise(r => setTimeout(r, 50));
+    } catch {
+      failed++;
+    }
+  }
+
+  broadcastPending.delete('message');
+  broadcastPending.delete('userCount');
+
+  await ctx.replyWithMarkdown(
+    `✅ *Broadcast complete*\n\n📤 Sent: *${sent}* (${total})\n❌ Failed: *${failed}*`
+  );
+});
+
+bot.command('cancel_broadcast', async (ctx) => {
+  if (!broadcastPending.has('message')) return ctx.reply('No pending broadcast.');
+  broadcastPending.delete('message');
+  broadcastPending.delete('userCount');
+  await ctx.reply('✅ Broadcast cancelled.');
 });
 
 bot.command('deactivate', async (ctx) => {
@@ -222,7 +323,7 @@ bot.command('activate', async (ctx) => {
 
     await mainBot.telegram.sendMessage(
       userChatId,
-      `🎉 *Congratulations!* 🎉\n\nYour *${planLabel} Premium* plan has been activated!\n📆 Duration: ${plan === 'monthly' ? '30 days' : '365 days'} unlimited\n\n✨ Unlimited background removal\n✨ 4x HD Upscale\n✨ AI Image Generation\n✨ AI Voice Generation\n\n🔹 /stats — Check your status\n🔹 /share — Earn more rewards\n\nThank you for your support! 🙏`,
+      `🎉 *Congratulations!* 🎉\n\nYour *${planLabel} Premium* plan has been activated!\n📆 Duration: ${plan === 'monthly' ? '30 days' : '365 days'} unlimited\n\n✨ Unlimited background removal\n✨ 4x HD Upscale\n✨ AI Image Generation\n✨ AI Voice Generation\n✨ AI Video Generation\n\n🔹 /stats — Check your status\n🔹 /share — Earn more rewards\n\nThank you for your support! 🙏`,
       { parse_mode: 'Markdown' }
     ).catch(() => {
       ctx.reply('⚠️ Premium activated but user may have blocked the bot.');
