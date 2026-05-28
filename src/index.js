@@ -66,7 +66,7 @@ bot.help(async (ctx) => {
     '🎨 *AI Generate:* /imagine your prompt\n' +
     '🎤 *Voice Gen:* /voice — select language & voice, send text\n' +
     '🎬 *Video Gen:* /video your prompt\n\n' +
-    '🤝 *Share:* Use @AiBgRemover_Bot in any chat\n\n' +
+    '🤝 *Share:* Use @AiBgRemover\\_Bot in any chat\n\n' +
      '⚡ Max 20MB per photo, max 3 min per video\n' +
      `🔹 Free operations left today: ${stats?.dailyRemaining ?? config.FREE_LIMIT_DAILY}\n\n` +
      'Type /share to get unlimited!\n' +
