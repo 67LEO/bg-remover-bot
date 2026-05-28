@@ -34,11 +34,10 @@ bot.start(async (ctx) => {
   if (referrerId) {
     await db.addReferral(referrerId, chatId);
     try {
-      await ctx.telegram.sendMessage(referrerId, 'Someone joined using your referral link! You earned bonus uses!');
+      await ctx.telegram.sendMessage(referrerId, '🎉 Someone joined using your referral link! Keep sharing to unlock unlimited premium days!');
     } catch {}
   }
 
-  const isHindi = ctx.chat.type === 'private' && ctx.message.text.includes('hindi');
   await ctx.replyWithMarkdown(
     '👋 *Welcome to AI Image Editor Bot* 🇮🇳\n\n' +
     '✨ *Features:*\n' +
@@ -51,14 +50,10 @@ bot.start(async (ctx) => {
     '🖼 Send photo → Remove background\n' +
     '/upscale — 4x HD quality\n' +
     '/imagine — AI image from text\n' +
+    '/video — AI video from text\n' +
     '/voice — Text to speech\n\n' +
     '⚡ /help • /share • /stats • /support • /premium\n\n' +
-    '👇 *हिन्दी में:*\n' +
-    'कोई भी फोटो भेजें → बैकग्राउंड हटेगा 🖼️\n' +
-    '/upscale — फोटो को HD बनाएं\n' +
-    '/imagine — टेक्स्ट से AI इमेज\n' +
-    '/voice — टेक्स्ट को आवाज़ में बदलें\n\n' +
-    'सब कुछ मुफ़्त! बस /share से unlimited पाएं 🚀'
+    'Everything free! /share to get unlimited 🚀'
   );
 });
 
@@ -72,7 +67,7 @@ bot.help(async (ctx) => {
     '🎤 *Voice Gen:* /voice — select language & voice, send text\n' +
     '🎬 *Video Gen:* /video your prompt\n\n' +
     '🤝 *Share:* Use @AiBgRemover_Bot in any chat\n\n' +
-     '⚡ Max 20MB per photo\n' +
+     '⚡ Max 20MB per photo, max 3 min per video\n' +
      `🔹 Free operations left today: ${stats?.dailyRemaining ?? config.FREE_LIMIT_DAILY}\n\n` +
      'Type /share to get unlimited!\n' +
      '💬 Need help? /support',
@@ -143,7 +138,7 @@ bot.command('imagine', async (ctx) => {
       '🎨 *AI Image Generator*\n\n' +
       'Usage: `/imagine <your prompt>`\n\n' +
       'Example: `/imagine a cute cat on a windowsill, photorealistic`\n\n' +
-      `🔹 Free today: */${config.FREE_LIMIT_DAILY} operations*\n\n` +
+      `🔹 Free today: *${config.FREE_LIMIT_DAILY} operations*\n\n` +
       'Powered by FLUX Pro 🚀'
     );
   }
@@ -179,7 +174,7 @@ bot.command('video', async (ctx) => {
       '🎬 *AI Video Generator*\n\n' +
       'Usage: `/video <your prompt>`\n\n' +
       'Example: `/video a cat playing piano in a garden`\n\n' +
-      `🔹 Free today: */${config.FREE_LIMIT_DAILY} operations*\n\n` +
+      `🔹 Free today: *${config.FREE_LIMIT_DAILY} operations*\n\n` +
       'Powered by AI 🚀'
     );
   }
@@ -201,7 +196,7 @@ bot.command('video', async (ctx) => {
     );
   }
 
-  const msg = await ctx.reply('🎬 Generating video... (may take 1-2 min)');
+  const msg = await ctx.reply('🎬 Generating AI video... (1-2 min)');
 
   generateVideoAsync(ctx, chatId, text, userStats, dailyUsed, msg)
     .catch(err => console.error('Background video error:', err.message));
@@ -229,7 +224,7 @@ bot.command('support', async (ctx) => {
     return await ctx.replyWithMarkdown(
       '💬 *Contact Support*\n\n' +
       'Usage: `/support your message`\n\n' +
-      'Example: `/support meri photo process nahi ho rahi hai`\n\n' +
+      'Example: `/support my photo is not processing`\n\n' +
       'Our team will get back to you soon!'
     );
   }
@@ -612,7 +607,7 @@ bot.on('inline_query', async (ctx) => {
       title: '📤 Share this bot with friends',
       description: 'AI Background Remover, Upscaler, Image, Voice & Video Generator',
       input_message_content: {
-        message_text: '🤖 *AI Image Editor Bot* — Remove bg, upscale, generate images & voice!\n\nSend me a photo or type /help to start 👇',
+        message_text: '🤖 *AI Image Editor Bot* — Remove bg, upscale, generate images, voice & video!\n\nSend me a photo or type /help to start 👇',
         parse_mode: 'Markdown',
       },
       reply_markup: {
