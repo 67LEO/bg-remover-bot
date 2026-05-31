@@ -374,7 +374,7 @@ bot.action(/imagine_size_(.+)/, async (ctx) => {
     );
   }
 
-  const msg = await ctx.reply('🎨 Generating image...');
+  const msg = ctx.callbackQuery.message;
   generateImageAsync(ctx, chatId, session.prompt, userStats, dailyUsed, msg, sizeId)
     .catch(err => console.error('Background imagine error:', err.message));
 });
@@ -384,6 +384,79 @@ bot.action('imagine_cancel', async (ctx) => {
   imagineSession.delete(chatId);
   await ctx.answerCbQuery('Cancelled');
   await ctx.editMessageText('❌ Cancelled. Use /imagine to try again.');
+});
+
+async function processGeneratedImage(ctx, chatId, action) {
+  const entry = lastGenImage.get(chatId);
+  if (!entry) return ctx.answerCbQuery('No recent image found. Generate one with /imagine first.');
+
+  await ctx.answerCbQuery('Processing...');
+
+  const { first_name: name, username } = ctx.chat;
+  await db.upsertUser(chatId, name, username);
+
+  const userStats = await db.getUserStats(chatId);
+  const dailyUsed = userStats?.dailyUsed ?? 0;
+
+  if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
+    return await ctx.replyWithMarkdown(
+      `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
+      '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
+      Markup.inlineKeyboard([
+        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images, voice & video 🚀`)],
+        [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
+      ])
+    );
+  }
+
+  const msg = await ctx.reply(action === 'upscale' ? '🔄 Upscaling 4x HD...' : '✂️ Removing background...');
+
+  try {
+    const fileLink = await ctx.telegram.getFileLink(entry.fileId);
+    const res = await fetch(fileLink.href);
+    if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+    const imageBuffer = Buffer.from(await res.arrayBuffer());
+
+    let resultBuffer, type, filename, label;
+    if (action === 'upscale') {
+      resultBuffer = await getUpscale(imageBuffer);
+      type = 'upscale';
+      filename = 'hd-result.png';
+      label = userStats?.isPremium
+        ? '🔄 4x HD Upscale done! (Unlimited)'
+        : `🔄 4x HD Upscale done! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`;
+    } else {
+      const maskBuffer = await getMask(imageBuffer);
+      resultBuffer = await applyMask(imageBuffer, maskBuffer);
+      type = 'bg_remove';
+      filename = 'result.png';
+      label = userStats?.isPremium
+        ? '✂️ Background removed! (Unlimited)'
+        : `✂️ Background removed! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`;
+    }
+
+    await ctx.telegram.sendDocument(
+      chatId,
+      { source: resultBuffer, filename },
+      { caption: label, reply_markup: shareButton(chatId).reply_markup }
+    );
+    await db.incrementUsage(chatId);
+    await db.logImage(chatId, imageBuffer.length, resultBuffer.length, type);
+  } catch (err) {
+    console.error('=== ERROR ===');
+    console.error('Message:', err.message);
+    await ctx.telegram.sendMessage(chatId, '❌ Error: ' + err.message.substring(0, 100));
+  } finally {
+    await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
+  }
+}
+
+bot.action('gen_upscale', async (ctx) => {
+  await processGeneratedImage(ctx, ctx.chat.id, 'upscale');
+});
+
+bot.action('gen_bgremove', async (ctx) => {
+  await processGeneratedImage(ctx, ctx.chat.id, 'bg_remove');
 });
 
 async function handleBuyPlan(ctx, plan) {
@@ -459,6 +532,7 @@ const userMode = new Map();
 const pendingPayment = new Map();
 const voiceSession = new Map();
 const imagineSession = new Map();
+const lastGenImage = new Map();
 
 function sendNotification(msg) {
   if (adminBot && config.ADMIN_CHAT_ID) {
@@ -613,14 +687,23 @@ async function processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, p
 async function generateImageAsync(ctx, chatId, text, userStats, dailyUsed, msg, size = 'SQUARE_HD') {
   try {
     const imgBuf = await generateImage(text, 'ultra-realistic', size);
-    await ctx.telegram.sendPhoto(
+    const sent = await ctx.telegram.sendPhoto(
       chatId,
       { source: imgBuf },
       { caption: userStats?.isPremium
           ? '✨ AI Generated! (Unlimited)'
           : `✨ AI Generated! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`,
-        reply_markup: shareButton(chatId).reply_markup }
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('🔄 Upscale 4x', 'gen_upscale'),
+             Markup.button.callback('✂️ Remove BG', 'gen_bgremove')],
+            ...shareButton(chatId).reply_markup.inline_keyboard,
+          ],
+        },
+      }
     );
+    const fileId = sent.photo[sent.photo.length - 1].file_id;
+    lastGenImage.set(chatId, { fileId, timestamp: Date.now() });
     await db.incrementUsage(chatId);
     await db.logImage(chatId, imgBuf.length, imgBuf.length, 'imagine');
   } catch (err) {
