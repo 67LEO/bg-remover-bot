@@ -167,9 +167,8 @@ bot.command('imagine', async (ctx) => {
       reply_markup: {
         inline_keyboard: [
           [Markup.button.callback('⬛ Square 1:1', 'imagine_size_SQUARE_HD')],
-          [Markup.button.callback('📱 Portrait 9:16', 'imagine_size_PORTRAIT_HD')],
-          [Markup.button.callback('🖥️ Landscape 16:9', 'imagine_size_LANDSCAPE_HD')],
-          [Markup.button.callback('📷 Photo 4:3', 'imagine_size_PHOTO_4_3')],
+          [Markup.button.callback('📱 Portrait 3:2', 'imagine_size_PORTRAIT_3_2')],
+          [Markup.button.callback('📐 Portrait 4:3', 'imagine_size_PORTRAIT_4_3')],
           [Markup.button.callback('❌ Cancel', 'imagine_cancel')],
         ],
       },

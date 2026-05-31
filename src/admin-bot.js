@@ -360,7 +360,7 @@ bot.command('debug', async (ctx) => {
     ['DATABASE_URL', !!process.env.DATABASE_URL],
   ];
   let msg = '*Admin Bot Status*\n';
-  vars.forEach(([k, v]) => msg += `${k}: ${v ? '✅' : '❌'}\n`);
+  vars.forEach(([k, v]) => msg += `${escMd(k)}: ${v ? '✅' : '❌'}\n`);
   msg += `\nNode: ${process.version}`;
   if (lastError) msg += `\n\nLast error:\n${escMd(lastError.substring(0, 200))}`;
   await ctx.reply(msg, { parse_mode: 'Markdown' });
