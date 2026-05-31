@@ -1,9 +1,22 @@
 const config = require('./config');
 const { ensureAuth, appStartup } = require('./firebase');
+const sharp = require('sharp');
 
 async function getUpscale(imageBuffer, scale = 4) {
   await appStartup();
   const { idToken, localId } = await ensureAuth();
+
+  // API max input size is 512px — resize maintaining aspect ratio
+  const img = sharp(imageBuffer);
+  const meta = await img.metadata();
+  const maxDim = Math.max(meta.width, meta.height);
+  let sendBuf = imageBuffer;
+  if (maxDim > 512) {
+    const ratio = 512 / maxDim;
+    const w = Math.round(meta.width * ratio);
+    const h = Math.round(meta.height * ratio);
+    sendBuf = await img.resize(w, h).jpeg().toBuffer();
+  }
 
   const boundary = '----boundary' + Date.now();
   const enc = Buffer.from;
@@ -23,7 +36,7 @@ async function getUpscale(imageBuffer, scale = 4) {
     parts.push(enc('\r\n'));
   };
 
-  addFile('imageFile', 'image.jpg', imageBuffer, 'image/jpeg');
+  addFile('imageFile', 'image.jpg', sendBuf, 'image/jpeg');
   addField('creativity', '0');
   addField('scale', String(scale));
   addField('user_id', localId);
