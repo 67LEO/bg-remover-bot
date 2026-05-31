@@ -6,3 +6,6 @@ SECRETS.md
 AGENTS.md
 
 SUMMARY.md
+.opencode/
+opencode.json
+test-*.js

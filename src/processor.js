@@ -3,7 +3,7 @@ const { ensureAuth, appStartup } = require('./firebase');
 
 async function getUpscale(imageBuffer, scale = 4) {
   await appStartup();
-  const { idToken } = await ensureAuth();
+  const { idToken, localId } = await ensureAuth();
 
   const boundary = '----boundary' + Date.now();
   const enc = Buffer.from;
@@ -26,6 +26,7 @@ async function getUpscale(imageBuffer, scale = 4) {
   addFile('imageFile', 'image.jpg', imageBuffer, 'image/jpeg');
   addField('creativity', '0');
   addField('scale', String(scale));
+  addField('user_id', localId);
 
   parts.push(enc('--' + boundary + '--\r\n'));
   const body = Buffer.concat(parts);

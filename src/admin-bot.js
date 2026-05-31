@@ -15,6 +15,10 @@ let lastError = null;
 
 const broadcastPending = new Map();
 
+function escMd(s) {
+  return String(s).replace(/([_*`])/g, '\\$1');
+}
+
 bot.use((ctx, next) => {
   if (ctx.chat.id === ADMIN_ID) return next();
 });
@@ -53,11 +57,17 @@ bot.command('admin', async (ctx) => {
   const users = await db.getAllUsers();
   const dailyActive = await db.getDailyActiveCount();
 
+  const typeLabels = { bg_remove: 'Background', upscale: 'Upscale', imagine: 'AI Image', video: 'AI Video' };
+  const fmtType = (t) => typeLabels[t] || t;
+  const breakdown = (obj) => Object.entries(obj).map(([k, v]) => `${fmtType(k)}: ${v}`).join(', ');
+
   let msg = '📊 *Bot Analytics*\n\n';
   msg += `👥 Total users: *${total.totalUsers}*\n`;
-  msg += `🖼️ Total images: *${total.totalImages}*\n`;
-  msg += `📸 Today active: *${dailyActive}*\n`;
-  msg += `📸 Today images: *${total.todayImages}*\n\n`;
+  msg += `🖼️ Total operations: *${total.totalImages}*\n`;
+  msg += `   ${breakdown(total.byType)}\n`;
+  msg += `📸 Today: *${total.todayImages}*\n`;
+  msg += `   ${breakdown(total.todayByType)}\n`;
+  msg += `📊 Today active: *${dailyActive}*\n\n`;
 
   const top = users.slice(0, 5);
   msg += '*Top 5 Users:*\n';
@@ -155,7 +165,7 @@ bot.command('send', async (ctx) => {
   if (!text) return ctx.reply('❌ Message cannot be empty');
 
   try {
-    await mainBot.telegram.sendMessage(targetId, text, { parse_mode: 'Markdown' });
+    await mainBot.telegram.sendMessage(targetId, escMd(text), { parse_mode: 'Markdown' });
     await ctx.replyWithMarkdown(`✅ Message sent to \`${targetId}\``);
   } catch (err) {
     lastError = err.message;
@@ -194,7 +204,7 @@ bot.command('confirm_broadcast', async (ctx) => {
 
   for (const user of allUsers) {
     try {
-      await mainBot.telegram.sendMessage(user.chat_id, msg, { parse_mode: 'Markdown' });
+      await mainBot.telegram.sendMessage(user.chat_id, escMd(msg), { parse_mode: 'Markdown' });
       sent++;
       await new Promise(r => setTimeout(r, 50));
     } catch {
@@ -260,7 +270,7 @@ bot.command('reply', async (ctx) => {
   try {
     await mainBot.telegram.sendMessage(
       ticket.chat_id,
-      `📬 *Reply to your ticket #${ticketId}*\n\n${replyMsg}\n\nNeed more help? Send /support`,
+      `📬 *Reply to your ticket #${ticketId}*\n\n${escMd(replyMsg)}\n\nNeed more help? Send /support`,
       { parse_mode: 'Markdown' }
     );
     await ctx.reply(`✅ Reply sent to ticket #${ticketId}`);
@@ -352,7 +362,7 @@ bot.command('debug', async (ctx) => {
   let msg = '*Admin Bot Status*\n';
   vars.forEach(([k, v]) => msg += `${k}: ${v ? '✅' : '❌'}\n`);
   msg += `\nNode: ${process.version}`;
-  if (lastError) msg += `\n\nLast error:\n${lastError.substring(0, 200)}`;
+  if (lastError) msg += `\n\nLast error:\n${escMd(lastError.substring(0, 200))}`;
   await ctx.reply(msg, { parse_mode: 'Markdown' });
 });
 

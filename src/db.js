@@ -44,8 +44,10 @@ async function init() {
         chat_id BIGINT NOT NULL,
         original_size INTEGER,
         result_size INTEGER,
+        type TEXT NOT NULL DEFAULT 'bg_remove',
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
+      ALTER TABLE images ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'bg_remove';
       CREATE TABLE IF NOT EXISTS support_tickets (
         id SERIAL PRIMARY KEY,
         chat_id BIGINT NOT NULL,
@@ -112,10 +114,10 @@ async function incrementUsage(chatId) {
   await query('UPDATE users SET total_uses = total_uses + 1 WHERE chat_id = $1', [chatId]);
 }
 
-async function logImage(chatId, originalSize, resultSize) {
+async function logImage(chatId, originalSize, resultSize, type = 'bg_remove') {
   await query(
-    'INSERT INTO images (chat_id, original_size, result_size) VALUES ($1, $2, $3)',
-    [chatId, originalSize, resultSize]
+    'INSERT INTO images (chat_id, original_size, result_size, type) VALUES ($1, $2, $3, $4)',
+    [chatId, originalSize, resultSize, type]
   );
 }
 
@@ -162,10 +164,15 @@ async function getTotalStats() {
   const users = await query('SELECT COUNT(*) as count FROM users');
   const images = await query('SELECT COUNT(*) as count FROM images');
   const todayImages = await query("SELECT COUNT(*) as count FROM images WHERE created_at::date = CURRENT_DATE");
+  const byType = await query('SELECT type, COUNT(*) as count FROM images GROUP BY type');
+  const todayByType = await query("SELECT type, COUNT(*) as count FROM images WHERE created_at::date = CURRENT_DATE GROUP BY type");
+  const fmt = (rows) => { const o = {}; rows.forEach(r => { o[r.type] = parseInt(r.count); }); return o; };
   return {
     totalUsers: parseInt(users.rows[0]?.count || '0'),
     totalImages: parseInt(images.rows[0]?.count || '0'),
     todayImages: parseInt(todayImages.rows[0]?.count || '0'),
+    byType: fmt(byType.rows),
+    todayByType: fmt(todayByType.rows),
   };
 }
 

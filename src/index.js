@@ -160,10 +160,21 @@ bot.command('imagine', async (ctx) => {
     );
   }
 
-  const msg = await ctx.reply('🎨 Generating image...');
-
-  generateImageAsync(ctx, chatId, text, userStats, dailyUsed, msg)
-    .catch(err => console.error('Background imagine error:', err.message));
+  imagineSession.set(chatId, { prompt: text });
+  await ctx.reply(
+    `🎨 Choose aspect ratio for:\n"${text.length > 50 ? text.substring(0, 50) + '...' : text}" 👇`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [Markup.button.callback('⬛ Square 1:1', 'imagine_size_SQUARE_HD')],
+          [Markup.button.callback('📱 Portrait 9:16', 'imagine_size_PORTRAIT_HD')],
+          [Markup.button.callback('🖥️ Landscape 16:9', 'imagine_size_LANDSCAPE_HD')],
+          [Markup.button.callback('📷 Photo 4:3', 'imagine_size_PHOTO_4_3')],
+          [Markup.button.callback('❌ Cancel', 'imagine_cancel')],
+        ],
+      },
+    }
+  );
 });
 
 bot.command('video', async (ctx) => {
@@ -334,6 +345,48 @@ bot.action(/voice_select_(.+)/, async (ctx) => {
   );
 });
 
+bot.action(/imagine_size_(.+)/, async (ctx) => {
+  const chatId = ctx.chat.id;
+  const sizeId = ctx.match[1];
+  const session = imagineSession.get(chatId);
+  if (!session?.prompt) return ctx.answerCbQuery('Session expired. Use /imagine again.');
+
+  imagineSession.delete(chatId);
+
+  await ctx.answerCbQuery('Generating...');
+  await ctx.editMessageText('🎨 Generating image...');
+
+  const { first_name: name, username } = ctx.chat;
+  await db.upsertUser(chatId, name, username);
+
+  const userStats = await db.getUserStats(chatId);
+  const dailyUsed = userStats?.dailyUsed ?? 0;
+
+  if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
+    return await ctx.editMessageText(
+      `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
+      '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
+      { parse_mode: 'Markdown', reply_markup: {
+        inline_keyboard: [
+          [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images, voice & video 🚀`)],
+          [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
+        ],
+      }}
+    );
+  }
+
+  const msg = await ctx.reply('🎨 Generating image...');
+  generateImageAsync(ctx, chatId, session.prompt, userStats, dailyUsed, msg, sizeId)
+    .catch(err => console.error('Background imagine error:', err.message));
+});
+
+bot.action('imagine_cancel', async (ctx) => {
+  const chatId = ctx.chat.id;
+  imagineSession.delete(chatId);
+  await ctx.answerCbQuery('Cancelled');
+  await ctx.editMessageText('❌ Cancelled. Use /imagine to try again.');
+});
+
 async function handleBuyPlan(ctx, plan) {
   const chatId = ctx.chat.id;
   const { first_name: name, username } = ctx.chat;
@@ -395,12 +448,18 @@ bot.command('cancel', async (ctx) => {
     await ctx.reply('✅ Voice generation cancelled. Use /voice to start again.');
     return;
   }
+  if (imagineSession.has(chatId)) {
+    imagineSession.delete(chatId);
+    await ctx.reply('✅ Image generation cancelled. Use /imagine to start again.');
+    return;
+  }
   await ctx.reply('No pending operation to cancel.');
 });
 
 const userMode = new Map();
 const pendingPayment = new Map();
 const voiceSession = new Map();
+const imagineSession = new Map();
 
 function sendNotification(msg) {
   if (adminBot && config.ADMIN_CHAT_ID) {
@@ -515,7 +574,7 @@ async function processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, p
     let resultBuffer;
     if (doUpscale) {
       resultBuffer = await getUpscale(imageBuffer);
-      await db.logImage(chatId, imageBuffer.length, resultBuffer.length);
+      await db.logImage(chatId, imageBuffer.length, resultBuffer.length, 'upscale');
       await ctx.telegram.sendDocument(
         chatId,
         { source: resultBuffer, filename: 'hd-result.png' },
@@ -529,7 +588,7 @@ async function processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, p
     } else {
       const maskBuffer = await getMask(imageBuffer);
       resultBuffer = await applyMask(imageBuffer, maskBuffer);
-      await db.logImage(chatId, imageBuffer.length, resultBuffer.length);
+      await db.logImage(chatId, imageBuffer.length, resultBuffer.length, 'bg_remove');
       await ctx.telegram.sendDocument(
         chatId,
         { source: resultBuffer, filename: 'result.png' },
@@ -552,9 +611,9 @@ async function processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, p
   }
 }
 
-async function generateImageAsync(ctx, chatId, text, userStats, dailyUsed, msg) {
+async function generateImageAsync(ctx, chatId, text, userStats, dailyUsed, msg, size = 'SQUARE_HD') {
   try {
-    const imgBuf = await generateImage(text);
+    const imgBuf = await generateImage(text, 'ultra-realistic', size);
     await ctx.telegram.sendPhoto(
       chatId,
       { source: imgBuf },
@@ -564,6 +623,7 @@ async function generateImageAsync(ctx, chatId, text, userStats, dailyUsed, msg) 
         reply_markup: shareButton(chatId).reply_markup }
     );
     await db.incrementUsage(chatId);
+    await db.logImage(chatId, imgBuf.length, imgBuf.length, 'imagine');
   } catch (err) {
     console.error('=== ERROR ===');
     console.error('Message:', err.message);
@@ -589,6 +649,7 @@ async function generateVideoAsync(ctx, chatId, text, userStats, dailyUsed, msg) 
         reply_markup: shareButton(chatId).reply_markup }
     );
     await db.incrementUsage(chatId);
+    await db.logImage(chatId, buf.length, buf.length, 'video');
   } catch (err) {
     console.error('=== VIDEO ERROR ===');
     console.error('Message:', err.message);
