@@ -29,30 +29,13 @@ async function getFreshToken() {
     expiresAt = payload.exp * 1000;
   } catch {}
 
-  const limitRes = await fetch(`${API_BASE}/api/v1/user/check-limit?type=t2v`, {
-    headers: {
-      Sign: SIGN,
-      'Device-Id': deviceId,
-      'Ctry-Target': 'others',
-      versionCode: '78',
-      Authorization: `Bearer ${token}`,
-    },
-  });
-  const limitData = await limitRes.json();
-
-  const cache = {
-    token,
-    deviceId,
-    expiresAt,
-    remaining: limitData.data?.remaining ?? 10,
-    totalLimit: limitData.data?.total_limit ?? 10,
-  };
+  const cache = { token, deviceId, expiresAt };
   tokenCache = cache;
   return cache;
 }
 
 async function ensureToken() {
-  if (!tokenCache || Date.now() >= tokenCache.expiresAt - 60000 || tokenCache.remaining <= 0) {
+  if (!tokenCache || Date.now() >= tokenCache.expiresAt - 60000) {
     return getFreshToken();
   }
   return tokenCache;
@@ -88,15 +71,18 @@ async function generateVideo(prompt, aspectRatio = 'auto') {
   });
 
   if (!genRes.ok) {
+    if (genRes.status === 429) {
+      tokenCache = null;
+      throw new Error('Daily video generation limit reached. Try again tomorrow.');
+    }
     const errBody = await genRes.text();
     throw new Error(`T2V generation failed (${genRes.status}): ${errBody.substring(0, 200)}`);
   }
 
   const genData = await genRes.json();
-  cache.remaining--;
 
   if (genData.data?.url) {
-    return { url: genData.data.url, remaining: cache.remaining };
+    return { url: genData.data.url };
   }
 
   throw new Error(genData.message || 'T2V generation returned no URL');

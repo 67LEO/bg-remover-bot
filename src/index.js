@@ -38,6 +38,13 @@ function parseReferral(ctx) {
   return null;
 }
 
+bot.use((ctx, next) => {
+  if (ctx.message && ctx.chat && !checkRateLimit(ctx.chat.id)) {
+    return ctx.reply('⏳ Too many requests. Please slow down and try again in a minute.');
+  }
+  return next();
+});
+
 bot.start(async (ctx) => {
   const { id: chatId, first_name: name, username } = ctx.chat;
   await db.upsertUser(chatId, name, username);
@@ -424,10 +431,8 @@ async function processGeneratedImage(ctx, chatId, action) {
   const msg = await ctx.reply(action === 'upscale' ? '🔄 Upscaling 4x HD...' : '✂️ Removing background...');
 
   try {
-    const fileLink = await ctx.telegram.getFileLink(entry.fileId);
-    const res = await fetch(fileLink.href);
-    if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-    const imageBuffer = Buffer.from(await res.arrayBuffer());
+    const imageBuffer = entry.buffer;
+    if (!imageBuffer) throw new Error('No cached image');
 
     let resultBuffer, type, filename, label;
     if (action === 'upscale') {
@@ -553,7 +558,26 @@ setInterval(() => {
   for (const [k, v] of voiceSession) { if (now - (v._ts || 0) > SESSION_TTL) voiceSession.delete(k); }
   for (const [k, v] of imagineSession) { if (now - (v._ts || 0) > SESSION_TTL) imagineSession.delete(k); }
   for (const [k, v] of lastGenImage) { if (now - (v.timestamp || 0) > SESSION_TTL) lastGenImage.delete(k); }
+  for (const [k, v] of rateLimitMap) { if (now - v > 60000) rateLimitMap.delete(k); }
 }, 60000);
+
+const RATE_LIMIT = 5;
+const RATE_WINDOW = 60000;
+const rateLimitMap = new Map();
+
+function checkRateLimit(chatId) {
+  const now = Date.now();
+  const ts = rateLimitMap.get(chatId);
+  if (ts && now - ts < RATE_WINDOW) {
+    const count = rateLimitMap.get(chatId + '_count') || 1;
+    if (count >= RATE_LIMIT) return false;
+    rateLimitMap.set(chatId + '_count', count + 1);
+  } else {
+    rateLimitMap.set(chatId, now);
+    rateLimitMap.set(chatId + '_count', 1);
+  }
+  return true;
+}
 
 function sendNotification(msg) {
   if (adminBot && config.ADMIN_CHAT_ID) {
@@ -561,9 +585,7 @@ function sendNotification(msg) {
   }
 }
 
-function escMd(t) {
-  return t.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
-}
+const escMd = config.escMd;
 
 function shareButton(chatId) {
   const botUsername = process.env.BOT_USERNAME || 'AiBgRemover_Bot';
@@ -723,8 +745,7 @@ async function generateImageAsync(ctx, chatId, text, userStats, dailyUsed, msg, 
         },
       }
     );
-    const fileId = sent.photo[sent.photo.length - 1].file_id;
-    lastGenImage.set(chatId, { fileId, timestamp: Date.now() });
+    lastGenImage.set(chatId, { buffer: imgBuf, timestamp: Date.now() });
     await db.incrementUsage(chatId);
     await db.logImage(chatId, imgBuf.length, imgBuf.length, 'imagine');
   } catch (err) {
@@ -828,10 +849,16 @@ bot.on('photo', async (ctx) => {
   const { first_name: name, username } = ctx.chat;
   await db.upsertUser(chatId, name, username);
 
+  const sizes = ctx.message.photo;
+  const maxPhoto = sizes[sizes.length - 1];
+
+  if (maxPhoto.file_size > 20 * 1024 * 1024) {
+    return await ctx.reply('❌ Photo is too large. Maximum size is 20MB.');
+  }
+
   if (pendingPayment.has(chatId)) {
     const order = pendingPayment.get(chatId);
-    const photo = ctx.message.photo;
-    const fileId = photo[photo.length - 1].file_id;
+    const fileId = maxPhoto.file_id;
 
     await db.attachScreenshot(order.orderRef, fileId);
     pendingPayment.delete(chatId);
@@ -885,15 +912,30 @@ bot.on('photo', async (ctx) => {
 
 bot.on('document', async (ctx) => {
   const doc = ctx.message.document;
-  if (doc.mime_type?.startsWith('image/')) {
+  if (doc.file_size > 20 * 1024 * 1024) {
+    return await ctx.reply('❌ File is too large. Maximum size is 20MB.');
+  }
+  const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
+  if (doc.mime_type && validTypes.includes(doc.mime_type)) {
     return bot.emit('photo', ctx);
   }
-  await ctx.reply('Please send a photo (JPG/PNG), not a file.');
+  await ctx.reply('Please send a photo (JPG/PNG/WebP), not a file.');
 });
 
 const http = require('http');
 const PORT = process.env.PORT || 3000;
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
+  if (req.url === '/health') {
+    try {
+      await db.getUserCount();
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('OK');
+    } catch {
+      res.writeHead(503, { 'Content-Type': 'text/plain' });
+      res.end('DB DOWN');
+    }
+    return;
+  }
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('OK');
 });

@@ -15,9 +15,7 @@ let lastError = null;
 
 const broadcastPending = new Map();
 
-function escMd(s) {
-  return String(s).replace(/([_*`])/g, '\\$1');
-}
+const escMd = config.escMd;
 
 bot.use((ctx, next) => {
   if (ctx.chat.id === ADMIN_ID) return next();

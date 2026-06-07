@@ -58,4 +58,6 @@ module.exports = {
 
   FREE_LIMIT_DAILY: 10,
   REFERRAL_BONUS: 5,
+
+  escMd: (t) => String(t).replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&'),
 };
