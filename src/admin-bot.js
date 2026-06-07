@@ -169,7 +169,7 @@ bot.command('send', async (ctx) => {
     await ctx.replyWithMarkdown(`✅ Message sent to \`${targetId}\``);
   } catch (err) {
     lastError = err.message;
-    await ctx.replyWithMarkdown(`❌ Failed: \`${err.message.substring(0, 100)}\``);
+    await ctx.reply('❌ Failed to send message. User may have blocked the bot.');
   }
 });
 
@@ -248,7 +248,7 @@ bot.command('deactivate', async (ctx) => {
     } catch {}
   } catch (err) {
     lastError = err.message;
-    await ctx.reply('❌ Error deactivating: ' + err.message.substring(0, 100));
+    await ctx.reply('❌ Error deactivating premium.');
   }
 });
 
@@ -350,7 +350,7 @@ bot.command('activate', async (ctx) => {
     });
   } catch (err) {
     lastError = err.message;
-    await ctx.reply('❌ Error activating premium: ' + err.message.substring(0, 100));
+    await ctx.reply('❌ Error activating premium. Check the ID and try again.');
   }
 });
 

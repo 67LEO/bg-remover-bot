@@ -8,6 +8,18 @@ const { getVoices, generateSpeech, SUPPORTED_LANGUAGES } = require('./elevenlabs
 const { generateVideo } = require('./video');
 const fs = require('fs');
 
+const __origFetch = globalThis.fetch;
+globalThis.fetch = (url, opts = {}) => {
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(), 30000);
+  const signal = opts.signal;
+  if (signal) {
+    signal.addEventListener('abort', () => ctrl.abort(), { once: true });
+  }
+  opts.signal = ctrl.signal;
+  return __origFetch(url, opts).finally(() => clearTimeout(id));
+};
+
 if (!config.BOT_TOKEN) {
   console.error('BOT_TOKEN not set');
   process.exit(1);
@@ -123,7 +135,7 @@ bot.command('voice', async (ctx) => {
   const rows = SUPPORTED_LANGUAGES.map(lang =>
     [Markup.button.callback(`${lang.native} (${lang.name})`, `voice_lang_${lang.code}`)]
   );
-  voiceSession.set(chatId, { step: 'language' });
+  voiceSession.set(chatId, { step: 'language', _ts: Date.now() });
   await ctx.replyWithMarkdown(
     `🎤 *Voice Generator*\n\nFree today: *${dailyUsed}/${config.FREE_LIMIT_DAILY}*\n\nSelect a language 👇`,
     Markup.inlineKeyboard(rows)
@@ -160,7 +172,7 @@ bot.command('imagine', async (ctx) => {
     );
   }
 
-  imagineSession.set(chatId, { prompt: text });
+  imagineSession.set(chatId, { prompt: text, _ts: Date.now() });
   await ctx.reply(
     `🎨 Choose aspect ratio for:\n"${text.length > 50 ? text.substring(0, 50) + '...' : text}" 👇`,
     {
@@ -299,13 +311,13 @@ bot.action(/voice_lang_(.+)/, async (ctx) => {
       Markup.button.callback(`✅ Select`, `voice_select_${v.voiceId}`),
     ]);
 
-    voiceSession.set(chatId, { step: 'voice', language: langCode });
+    voiceSession.set(chatId, { step: 'voice', language: langCode, _ts: Date.now() });
     await ctx.editMessageText(
       `🎤 *${lang.native}* — Select a voice 👇\n\nTap 🎧 to preview, ✅ to select.`,
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } }
     );
   } catch (err) {
-    await ctx.editMessageText('❌ Error fetching voices: ' + err.message.substring(0, 100));
+    await ctx.editMessageText('❌ Error fetching voices. Please try again later.');
   }
 });
 
@@ -320,7 +332,7 @@ bot.action(/voice_preview_(.+)/, async (ctx) => {
     const res = await fetch(voice.previewUrl);
     if (!res.ok) throw new Error('Download failed');
     const buf = Buffer.from(await res.arrayBuffer());
-    await ctx.replyWithVoice({ source: buf }, { caption: `🎧 ${voice.name} — preview`, reply_to_message_id: ctx.msg.message_id });
+    await ctx.replyWithVoice({ source: buf }, { caption: `🎧 ${voice.name} — preview`, reply_to_message_id: ctx.callbackQuery.message.message_id });
   } catch {
     await ctx.reply('❌ Could not load preview.');
   }
@@ -336,7 +348,7 @@ bot.action(/voice_select_(.+)/, async (ctx) => {
   const voice = voices.find(v => v.voiceId === voiceId);
   const voiceName = voice?.name || voiceId;
 
-  voiceSession.set(chatId, { step: 'script', language: session.language, voiceId, voiceName });
+  voiceSession.set(chatId, { step: 'script', language: session.language, voiceId, voiceName, _ts: Date.now() });
   await ctx.answerCbQuery(`Selected ${voiceName}`);
   await ctx.editMessageText(
     `✅ Voice selected: *${voiceName}*\n\nNow send me the text you want to convert to speech 🎤`,
@@ -445,7 +457,7 @@ async function processGeneratedImage(ctx, chatId, action) {
   } catch (err) {
     console.error('=== ERROR ===');
     console.error('Message:', err.message);
-    await ctx.telegram.sendMessage(chatId, '❌ Error: ' + err.message.substring(0, 100));
+    await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Please try again later.');
   } finally {
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
   }
@@ -469,7 +481,7 @@ async function handleBuyPlan(ctx, plan) {
 
   try {
     await db.createPaymentOrder(orderRef, chatId, plan, planInfo.price);
-    pendingPayment.set(chatId, { orderRef, plan });
+    pendingPayment.set(chatId, { orderRef, plan, _ts: Date.now() });
 
     await ctx.editMessageText(
       `✅ *Order Created!* 🔖 \`${orderRef}\``,
@@ -533,6 +545,15 @@ const pendingPayment = new Map();
 const voiceSession = new Map();
 const imagineSession = new Map();
 const lastGenImage = new Map();
+
+const SESSION_TTL = 60 * 60 * 1000;
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of pendingPayment) { if (now - (v._ts || 0) > SESSION_TTL) pendingPayment.delete(k); }
+  for (const [k, v] of voiceSession) { if (now - (v._ts || 0) > SESSION_TTL) voiceSession.delete(k); }
+  for (const [k, v] of imagineSession) { if (now - (v._ts || 0) > SESSION_TTL) imagineSession.delete(k); }
+  for (const [k, v] of lastGenImage) { if (now - (v.timestamp || 0) > SESSION_TTL) lastGenImage.delete(k); }
+}, 60000);
 
 function sendNotification(msg) {
   if (adminBot && config.ADMIN_CHAT_ID) {
@@ -628,7 +649,7 @@ bot.on('text', async (ctx) => {
       );
       voiceSession.delete(chatId);
     } catch (err) {
-      await ctx.reply('❌ Error: ' + err.message.substring(0, 100));
+      await ctx.reply('❌ Something went wrong. Please try again later.');
     }
     return;
   }
@@ -678,7 +699,7 @@ async function processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, p
   } catch (err) {
     console.error('=== ERROR ===');
     console.error('Message:', err.message);
-    await ctx.telegram.sendMessage(chatId, '❌ Error: ' + err.message.substring(0, 100));
+    await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Please try again later.');
   } finally {
     await ctx.telegram.deleteMessage(chatId, processingMsg.message_id).catch(() => {});
   }
@@ -709,7 +730,7 @@ async function generateImageAsync(ctx, chatId, text, userStats, dailyUsed, msg, 
   } catch (err) {
     console.error('=== ERROR ===');
     console.error('Message:', err.message);
-    await ctx.telegram.sendMessage(chatId, '❌ Error: ' + err.message.substring(0, 100));
+    await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Please try again later.');
   } finally {
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
   }
@@ -735,7 +756,7 @@ async function generateVideoAsync(ctx, chatId, text, userStats, dailyUsed, msg) 
   } catch (err) {
     console.error('=== VIDEO ERROR ===');
     console.error('Message:', err.message);
-    await ctx.telegram.sendMessage(chatId, '❌ Error: ' + err.message.substring(0, 100));
+    await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Please try again later.');
   } finally {
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
   }

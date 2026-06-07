@@ -4,6 +4,7 @@ generated/
 data/
 SECRETS.md
 AGENTS.md
+*.md
 
 SUMMARY.md
 .opencode/

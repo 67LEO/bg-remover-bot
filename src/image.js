@@ -1,13 +1,11 @@
 const sharp = require('sharp');
 
 async function applyMask(originalBuffer, maskBuffer) {
-  const mask = sharp(maskBuffer);
-  const maskMeta = await mask.metadata();
-  const origMeta = sharp(originalBuffer);
-  const origInfo = await origMeta.metadata();
+  const origInfo = await sharp(originalBuffer).metadata();
+  const maskInfo = await sharp(maskBuffer).metadata();
 
-  const finalMask = (origInfo.width !== maskMeta.width || origInfo.height !== maskMeta.height)
-    ? await mask.resize(origInfo.width, origInfo.height, { fit: 'fill' }).toBuffer()
+  const finalMask = (origInfo.width !== maskInfo.width || origInfo.height !== maskInfo.height)
+    ? await sharp(maskBuffer).resize(origInfo.width, origInfo.height, { fit: 'fill' }).toBuffer()
     : maskBuffer;
 
   return sharp(originalBuffer)

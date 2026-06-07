@@ -133,16 +133,20 @@ async function getReferralCount(chatId) {
   return parseInt(r.rows[0]?.count || '0');
 }
 
+async function checkPremiumExpiry(user) {
+  if (user.is_premium && user.premium_until && new Date(user.premium_until) < new Date()) {
+    await deactivateUser(user.chat_id);
+    user.is_premium = false;
+    user.premium_until = null;
+  }
+}
+
 async function getUserStats(chatId) {
   const r = await query('SELECT * FROM users WHERE chat_id = $1', [chatId]);
   const user = r.rows[0];
   if (!user) return null;
 
-  if (user.is_premium && user.premium_until && new Date(user.premium_until) < new Date()) {
-    await deactivateUser(chatId);
-    user.is_premium = false;
-    user.premium_until = null;
-  }
+  await checkPremiumExpiry(user);
 
   const dailyUsed = await getUsage(chatId);
   return {
