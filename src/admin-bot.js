@@ -34,18 +34,16 @@ bot.start(async (ctx) => {
     '   💳 Premium: /premium (₹49/mo, ₹499/yr)\n\n' +
     '📋 *Admin Commands:*\n' +
     '   /tickets — Open support tickets\n' +
-    '   /payments — Pending payment orders\n' +
+    '   /payments [page] — Pending payment orders with screenshot\n' +
     '   /premiumusers — Active premium users\n' +
     '   /users [page] — List all users\n' +
-    '   /send `<chat_id>` `<msg>` — DM any user\n' +
-    '   /broadcast `<msg>` — Send to all users\n' +
-    '   `/confirm_broadcast` — Confirm pending broadcast\n' +
-    '   `/cancel_broadcast` — Cancel pending broadcast\n' +
+    '   /request `<ref>` `<reason>` — Ask user for new screenshot\n' +
     '   /activate `<id|ref>` `<plan>` — Activate premium\n' +
     '   /deactivate `<chat_id>` — Remove premium\n' +
     '   /reply `<id>` `<msg>` — Reply to ticket\n' +
     '   /close `<id>` — Close ticket\n' +
-    '   /request `<ref>` `<reason>` — Request new screenshot\n' +
+    '   /send `<chat_id>` `<msg>` — DM any user\n' +
+    '   /broadcast `<msg>` — Broadcast to all users\n' +
     '   /admin — Bot analytics\n' +
     '   /debug — System status'
   );
