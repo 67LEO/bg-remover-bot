@@ -982,6 +982,15 @@ const server = http.createServer(async (req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('OK');
 });
+server.timeout = 60000;
+
+function handleWithTimeout(botInstance, json) {
+  return Promise.race([
+    botInstance.handleUpdate(json),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Handler timed out after 60s')), 60000)),
+  ]);
+}
+
 server.listen(PORT, () => {
   console.log(`Server on port ${PORT}`);
 });
@@ -1028,11 +1037,11 @@ async function startBot() {
         if (req.url === '/admin-webhook' && adminBot) {
           res.writeHead(200);
           res.end('OK');
-          adminBot.handleUpdate(json).catch(e => console.error('Admin webhook error:', e.message));
+          handleWithTimeout(adminBot, json).catch(e => console.error('Admin webhook error:', e.message));
         } else if (req.url === '/webhook') {
           res.writeHead(200);
           res.end('OK');
-          bot.handleUpdate(json).catch(e => console.error('Main webhook error:', e.message));
+          handleWithTimeout(bot, json).catch(e => console.error('Main webhook error:', e.message));
         } else {
           res.writeHead(200);
           res.end('OK');
