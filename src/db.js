@@ -6,7 +6,16 @@ const pool = new Pool({
   max: 5,
 });
 
+let dbReady = false;
+let dbReadyQueue = [];
+
+function whenReady() {
+  if (dbReady) return Promise.resolve();
+  return new Promise(resolve => dbReadyQueue.push(resolve));
+}
+
 async function query(text, params) {
+  await whenReady();
   const client = await pool.connect();
   try {
     return await client.query(text, params);
@@ -84,6 +93,10 @@ async function init() {
     console.log('Database tables ready');
   } catch (err) {
     console.error('Database init error:', err.message);
+  } finally {
+    dbReady = true;
+    dbReadyQueue.forEach(r => r());
+    dbReadyQueue = [];
   }
 }
 

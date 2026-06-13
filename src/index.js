@@ -408,6 +408,7 @@ bot.action('imagine_cancel', async (ctx) => {
 async function processGeneratedImage(ctx, chatId, action) {
   const entry = lastGenImage.get(chatId);
   if (!entry) return ctx.answerCbQuery('No recent image found. Generate one with /imagine first.');
+  lastGenImage.delete(chatId);
 
   await ctx.answerCbQuery('Processing...');
 
@@ -488,10 +489,8 @@ async function handleBuyPlan(ctx, plan) {
     await db.createPaymentOrder(orderRef, chatId, plan, planInfo.price);
     pendingPayment.set(chatId, { orderRef, plan, _ts: Date.now() });
 
-    await ctx.editMessageText(
-      `✅ *Order Created!* 🔖 \`${orderRef}\``,
-      { parse_mode: 'Markdown' }
-    );
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.replyWithMarkdown(`✅ *Order Created!* 🔖 \`${orderRef}\``);
 
     const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=upi://pay?pa=${encodeURIComponent(config.UPI_ID)}&pn=${encodeURIComponent(config.UPI_NAME)}&am=${planInfo.price}&tn=${orderRef}`;
 
@@ -514,7 +513,7 @@ async function handleBuyPlan(ctx, plan) {
     const displayName = name || username || `User ${chatId}`;
     sendNotification(`🆕 *New Payment Order*\n\n👤 ${displayName}\n💰 ${planInfo.label} — ₹${planInfo.price}\n🔖 ${orderRef}`);
   } catch (err) {
-    await ctx.editMessageText('❌ Error creating order. Please try /premium again.');
+    await ctx.replyWithMarkdown('❌ Error creating order. Please try /premium again.').catch(() => {});
   }
 }
 
@@ -556,7 +555,7 @@ setInterval(() => {
   for (const [k, v] of voiceSession) { if (now - (v._ts || 0) > SESSION_TTL) voiceSession.delete(k); }
   for (const [k, v] of imagineSession) { if (now - (v._ts || 0) > SESSION_TTL) imagineSession.delete(k); }
   for (const [k, v] of lastGenImage) { if (now - (v.timestamp || 0) > SESSION_TTL) lastGenImage.delete(k); }
-  for (const [k, v] of rateLimitMap) { if (now - v > 60000) rateLimitMap.delete(k); }
+  for (const [k, v] of rateLimitMap) { if (now - v.ts > 60000) rateLimitMap.delete(k); }
 }, 60000);
 
 const RATE_LIMIT = 5;
@@ -565,14 +564,12 @@ const rateLimitMap = new Map();
 
 function checkRateLimit(chatId) {
   const now = Date.now();
-  const ts = rateLimitMap.get(chatId);
-  if (ts && now - ts < RATE_WINDOW) {
-    const count = rateLimitMap.get(chatId + '_count') || 1;
-    if (count >= RATE_LIMIT) return false;
-    rateLimitMap.set(chatId + '_count', count + 1);
+  const entry = rateLimitMap.get(chatId);
+  if (entry && now - entry.ts < RATE_WINDOW) {
+    if (entry.count >= RATE_LIMIT) return false;
+    entry.count++;
   } else {
-    rateLimitMap.set(chatId, now);
-    rateLimitMap.set(chatId + '_count', 1);
+    rateLimitMap.set(chatId, { ts: now, count: 1 });
   }
   return true;
 }
@@ -932,6 +929,7 @@ bot.on('document', async (ctx) => {
   }
   const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
   if (doc.mime_type && validTypes.includes(doc.mime_type)) {
+    ctx.message.photo = [{ file_id: doc.file_id, file_size: doc.file_size }];
     return bot.emit('photo', ctx);
   }
   await ctx.reply('Please send a photo (JPG/PNG/WebP), not a file.');
@@ -991,14 +989,20 @@ async function startBot() {
       req.on('data', chunk => bufs.push(chunk));
       req.on('end', () => {
         const body = Buffer.concat(bufs).toString();
+        let json;
+        try { json = JSON.parse(body); } catch {
+          res.writeHead(400);
+          res.end('Bad Request');
+          return;
+        }
         if (req.url === '/admin-webhook' && adminBot) {
           res.writeHead(200);
           res.end('OK');
-          adminBot.handleUpdate(JSON.parse(body)).catch(e => console.error('Admin webhook error:', e.message));
+          adminBot.handleUpdate(json).catch(e => console.error('Admin webhook error:', e.message));
         } else if (req.url === '/webhook') {
           res.writeHead(200);
           res.end('OK');
-          bot.handleUpdate(JSON.parse(body)).catch(e => console.error('Main webhook error:', e.message));
+          bot.handleUpdate(json).catch(e => console.error('Main webhook error:', e.message));
         } else {
           res.writeHead(200);
           res.end('OK');
