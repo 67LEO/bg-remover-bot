@@ -593,6 +593,29 @@ function shareButton(chatId) {
   ]);
 }
 
+async function handlePaymentScreenshot(ctx, chatId, name, username, order, fileId) {
+  await db.attachScreenshot(order.orderRef, fileId);
+  pendingPayment.delete(chatId);
+
+  await ctx.reply('✅ Payment screenshot received! Admin will verify soon.\n\nYou can check your status via /stats');
+
+  const displayName = name || username || `User ${chatId}`;
+  sendNotification(`📸 *New Payment Screenshot*\n\n👤 ${displayName}\n🔖 Ref: ${order.orderRef}\n💰 ${order.plan}\n\nUse \`/activate ${order.orderRef} ${order.plan}\` to confirm.`);
+  if (config.ADMIN_CHAT_ID && adminBot) {
+    try {
+      const fileLink = await ctx.telegram.getFileLink(fileId);
+      const res = await fetch(fileLink.href);
+      if (res.ok) {
+        const buf = Buffer.from(await res.arrayBuffer());
+        adminBot.telegram.sendPhoto(config.ADMIN_CHAT_ID, { source: buf }, {
+          caption: `📸 *New Payment Screenshot*\n\n👤 ${displayName}\n🔖 Ref: ${order.orderRef}\n💰 ${order.plan}`,
+          parse_mode: 'Markdown',
+        }).catch(() => {});
+      }
+    } catch {}
+  }
+}
+
 bot.command('debug', async (ctx) => {
   const vars = [
     ['BOT_TOKEN', !!config.BOT_TOKEN],
@@ -864,28 +887,14 @@ bot.on('photo', async (ctx) => {
 
   if (pendingPayment.has(chatId)) {
     const order = pendingPayment.get(chatId);
-    const fileId = maxPhoto.file_id;
+    await handlePaymentScreenshot(ctx, chatId, name, username, order, maxPhoto.file_id);
+    return;
+  }
 
-    await db.attachScreenshot(order.orderRef, fileId);
-    pendingPayment.delete(chatId);
-
-    await ctx.reply('✅ Payment screenshot received! Admin will verify soon.\n\nYou can check your status via /stats');
-
-    const displayName = name || username || `User ${chatId}`;
-    sendNotification(`📸 *New Payment Screenshot*\n\n👤 ${displayName}\n🔖 Ref: ${order.orderRef}\n💰 ${order.plan}\n\nUse \`/activate ${order.orderRef} ${order.plan}\` to confirm.`);
-    if (config.ADMIN_CHAT_ID && adminBot) {
-      try {
-        const fileLink = await ctx.telegram.getFileLink(fileId);
-        const res = await fetch(fileLink.href);
-        if (res.ok) {
-          const buf = Buffer.from(await res.arrayBuffer());
-          adminBot.telegram.sendPhoto(config.ADMIN_CHAT_ID, { source: buf }, {
-            caption: `📸 *New Payment Screenshot*\n\n👤 ${displayName}\n🔖 Ref: ${order.orderRef}\n💰 ${order.plan}`,
-            parse_mode: 'Markdown',
-          }).catch(() => {});
-        }
-      } catch {}
-    }
+  const dbOrder = await db.getUserPendingOrder(chatId);
+  if (dbOrder) {
+    pendingPayment.set(chatId, { orderRef: dbOrder.order_ref, plan: dbOrder.plan, _ts: Date.now() });
+    await handlePaymentScreenshot(ctx, chatId, name, username, { orderRef: dbOrder.order_ref, plan: dbOrder.plan }, maxPhoto.file_id);
     return;
   }
 

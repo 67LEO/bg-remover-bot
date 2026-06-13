@@ -45,6 +45,7 @@ bot.start(async (ctx) => {
     '   /deactivate `<chat_id>` — Remove premium\n' +
     '   /reply `<id>` `<msg>` — Reply to ticket\n' +
     '   /close `<id>` — Close ticket\n' +
+    '   /request `<ref>` `<reason>` — Request new screenshot\n' +
     '   /admin — Bot analytics\n' +
     '   /debug — System status'
   );
@@ -256,6 +257,42 @@ bot.command('deactivate', async (ctx) => {
   } catch (err) {
     lastError = err.message;
     await ctx.reply('❌ Error deactivating premium.');
+  }
+});
+
+bot.command('request', async (ctx) => {
+  const parts = ctx.message.text.split(' ');
+  if (parts.length < 3) return ctx.reply('Usage: /request <order_ref> <reason>\n\nClears the screenshot and asks the user to send a new one.\n\nExample: /request BG-A7X3K Screenshot is blurry, please send clear photo');
+
+  const orderRef = parts[1].toUpperCase();
+  const reason = parts.slice(2).join(' ').trim();
+
+  const order = await db.getPaymentOrderByRef(orderRef);
+  if (!order) return ctx.reply('❌ Order not found.');
+  if (order.status !== 'pending') return ctx.reply(`❌ Order is already ${order.status}.`);
+
+  await db.resetPaymentScreenshot(orderRef);
+
+  const displayName = order.first_name || order.username || `User ${order.chat_id}`;
+  await ctx.replyWithMarkdown(
+    `✅ Screenshot cleared for *${orderRef}*\n\n` +
+    `👤 ${escMd(displayName)}\n💬 Reason: ${escMd(reason)}\n\nUser will be notified to send a new screenshot.`
+  );
+
+  try {
+    await mainBot.telegram.sendMessage(
+      order.chat_id,
+      `📸 *Payment Screenshot Rejected*\n\n` +
+      `Your payment screenshot for *${orderRef}* was *not accepted*.\n\n` +
+      `📌 *Reason:* ${escMd(reason)}\n\n` +
+      `━━━━━━━━━━━━━━━━━━━\n` +
+      `👉 Please send a *new clear payment screenshot* (📸 PHOTO) here.\n` +
+      `━━━━━━━━━━━━━━━━━━━\n\n` +
+      `Have questions? Send /support`,
+      { parse_mode: 'Markdown' }
+    );
+  } catch {
+    await ctx.reply('⚠️ Could not notify user (they may have blocked the bot).');
   }
 });
 
