@@ -102,9 +102,9 @@ bot.help(async (ctx) => {
     '🎬 *Video Gen:* /video your prompt\n\n' +
     '🤝 *Share:* Use @AiBgRemover\\_Bot in any chat\n\n' +
      '⚡ Max 20MB per photo, max 3 min per video\n' +
-     `🔹 Free operations left today: ${stats?.dailyRemaining ?? config.FREE_LIMIT_DAILY}\n\n` +
-     'Type /share to get unlimited!\n' +
-     '💬 Need help? /support',
+      (stats?.isPremium ? '✅ *Unlimited Access*\n\n' : `🔹 Free today: *${stats?.dailyRemaining ?? config.FREE_LIMIT_DAILY}*\n\n`) +
+      'Type /share to get unlimited!\n' +
+      '💬 Need help? /support',
      stats?.dailyRemaining !== undefined ? shareButton(ctx.chat.id) : undefined
   );
 });
@@ -159,28 +159,30 @@ bot.command('voice', async (ctx) => {
   );
   voiceSession.set(chatId, { step: 'language', _ts: Date.now() });
   await ctx.replyWithMarkdown(
-    `🎤 *Voice Generator*\n\nFree today: *${dailyUsed}/${config.FREE_LIMIT_DAILY}*\n\nSelect a language 👇`,
+    `🎤 *Voice Generator*\n\n${userStats?.isPremium ? '✅ *Unlimited Access*' : `Free today: *${dailyUsed}/${config.FREE_LIMIT_DAILY}*`}\n\nSelect a language 👇`,
     Markup.inlineKeyboard(rows)
   );
 });
 
 bot.command('imagine', async (ctx) => {
   const chatId = ctx.chat.id;
+  const { first_name: name, username } = ctx.chat;
+  await db.upsertUser(chatId, name, username);
+
+  const userStats = await db.getUserStats(chatId);
   const text = ctx.message.text.slice('/imagine'.length).trim();
   if (!text) {
     return await ctx.replyWithMarkdown(
       '🎨 *AI Image Generator*\n\n' +
       'Usage: `/imagine <your prompt>`\n\n' +
       'Example: `/imagine a cute cat on a windowsill, photorealistic`\n\n' +
-      `🔹 Free today: *${config.FREE_LIMIT_DAILY} operations*\n\n` +
+      (userStats?.isPremium
+        ? '✅ *Unlimited Access*\n\n'
+        : `🔹 Free today: *${config.FREE_LIMIT_DAILY} operations*\n\n`) +
       'Powered by FLUX Pro 🚀'
     );
   }
 
-  const { first_name: name, username } = ctx.chat;
-  await db.upsertUser(chatId, name, username);
-
-  const userStats = await db.getUserStats(chatId);
   const dailyUsed = userStats?.dailyUsed ?? 0;
 
   if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
@@ -212,21 +214,23 @@ bot.command('imagine', async (ctx) => {
 
 bot.command('video', async (ctx) => {
   const chatId = ctx.chat.id;
+  const { first_name: name, username } = ctx.chat;
+  await db.upsertUser(chatId, name, username);
+
+  const userStats = await db.getUserStats(chatId);
   const text = ctx.message.text.slice('/video'.length).trim();
   if (!text) {
     return await ctx.replyWithMarkdown(
       '🎬 *AI Video Generator*\n\n' +
       'Usage: `/video <your prompt>`\n\n' +
       'Example: `/video a cat playing piano in a garden`\n\n' +
-      `🔹 Free today: *${config.FREE_LIMIT_DAILY} operations*\n\n` +
+      (userStats?.isPremium
+        ? '✅ *Unlimited Access*\n\n'
+        : `🔹 Free today: *${config.FREE_LIMIT_DAILY} operations*\n\n`) +
       'Powered by AI 🚀'
     );
   }
 
-  const { first_name: name, username } = ctx.chat;
-  await db.upsertUser(chatId, name, username);
-
-  const userStats = await db.getUserStats(chatId);
   const dailyUsed = userStats?.dailyUsed ?? 0;
 
   if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
