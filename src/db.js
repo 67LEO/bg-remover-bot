@@ -260,7 +260,13 @@ async function createPaymentOrder(orderRef, chatId, plan, amount) {
 }
 
 async function getPaymentOrderByRef(orderRef) {
-  const r = await query('SELECT * FROM payment_orders WHERE order_ref = $1', [orderRef]);
+  const r = await query(
+    `SELECT p.*, u.first_name, u.username
+     FROM payment_orders p
+     LEFT JOIN users u ON u.chat_id = p.chat_id
+     WHERE p.order_ref = $1`,
+    [orderRef]
+  );
   return r.rows[0] || null;
 }
 
@@ -295,6 +301,13 @@ async function getUserPendingOrder(chatId) {
 
 async function cancelPaymentOrder(orderRef) {
   await query("UPDATE payment_orders SET status = 'cancelled' WHERE order_ref = $1", [orderRef]);
+}
+
+async function revertPaymentOrder(orderRef) {
+  await query(
+    "UPDATE payment_orders SET status = 'pending', confirmed_at = NULL WHERE order_ref = $1",
+    [orderRef]
+  );
 }
 
 async function confirmPaymentOrder(orderRef, plan) {
@@ -356,4 +369,4 @@ async function getPremiumUsers() {
 
 init();
 
-module.exports = { upsertUser, getUsage, incrementUsage, logImage, addReferral, getReferralCount, getUserStats, getAllUsers, getUserCount, getTotalStats, getDailyActiveCount, createTicket, getOpenTickets, getTicketById, replyTicket, closeTicket, activatePremiumByAdmin, getUserSubscriptions, createPaymentOrder, getPaymentOrderByRef, getPendingPayments, attachScreenshot, resetPaymentScreenshot, getUserPendingOrder, cancelPaymentOrder, confirmPaymentOrder, deactivateUser, getPremiumUsers };
+module.exports = { upsertUser, getUsage, incrementUsage, logImage, addReferral, getReferralCount, getUserStats, getAllUsers, getUserCount, getTotalStats, getDailyActiveCount, createTicket, getOpenTickets, getTicketById, replyTicket, closeTicket, activatePremiumByAdmin, getUserSubscriptions, createPaymentOrder, getPaymentOrderByRef, getPendingPayments, attachScreenshot, resetPaymentScreenshot, getUserPendingOrder, cancelPaymentOrder, revertPaymentOrder, confirmPaymentOrder, deactivateUser, getPremiumUsers };

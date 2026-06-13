@@ -267,14 +267,46 @@ bot.command('request', async (ctx) => {
 
   const order = await db.getPaymentOrderByRef(orderRef);
   if (!order) return ctx.reply('❌ Order not found.');
+
+  if (order.status === 'confirmed') {
+    await db.deactivateUser(order.chat_id);
+    await db.revertPaymentOrder(orderRef);
+    await db.resetPaymentScreenshot(orderRef);
+
+    const displayName = escMd(order.first_name || order.username || `User ${order.chat_id}`);
+    await ctx.replyWithMarkdown(
+      `🔄 *Order Reverted — ${orderRef}*\n\n` +
+      `👤 ${displayName}\n` +
+      `💬 Reason: ${escMd(reason)}\n\n` +
+      `✅ Premium deactivated\n✅ Order reverted to pending\n✅ Screenshot cleared\n\nUser will be asked to send a new screenshot.`
+    );
+
+    try {
+      await mainBot.telegram.sendMessage(
+        order.chat_id,
+        `📸 *Payment Screenshot Rejected*\n\n` +
+        `Your payment for *${orderRef}* was previously approved but the screenshot was found invalid.\n\n` +
+        `📌 *Reason:* ${escMd(reason)}\n\n` +
+        `━━━━━━━━━━━━━━━━━━━\n` +
+        `👉 Please send a *new clear payment screenshot* (📸 PHOTO) here to get premium again.\n` +
+        `━━━━━━━━━━━━━━━━━━━\n\n` +
+        `Have questions? Send /support`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch {
+      await ctx.reply('⚠️ Could not notify user (they may have blocked the bot).');
+    }
+    return;
+  }
+
   if (order.status !== 'pending') return ctx.reply(`❌ Order is already ${order.status}.`);
 
   await db.resetPaymentScreenshot(orderRef);
 
-  const displayName = order.first_name || order.username || `User ${order.chat_id}`;
+  const displayName = escMd(order.first_name || order.username || `User ${order.chat_id}`);
   await ctx.replyWithMarkdown(
     `✅ Screenshot cleared for *${orderRef}*\n\n` +
-    `👤 ${escMd(displayName)}\n💬 Reason: ${escMd(reason)}\n\nUser will be notified to send a new screenshot.`
+    `👤 ${displayName}\n💬 Reason: ${escMd(reason)}\n\nUser will be notified to send a new screenshot.`
   );
 
   try {
