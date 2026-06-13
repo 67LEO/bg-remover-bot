@@ -171,7 +171,7 @@ bot.command('send', async (ctx) => {
   if (!text) return ctx.reply('❌ Message cannot be empty');
 
   try {
-    await mainBot.telegram.sendMessage(targetId, escMd(text), { parse_mode: 'Markdown' });
+    await mainBot.telegram.sendMessage(targetId, text);
     await ctx.replyWithMarkdown(`✅ Message sent to \`${targetId}\``);
   } catch (err) {
     lastError = err.message;
