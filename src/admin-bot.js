@@ -207,6 +207,7 @@ bot.command('confirm_broadcast', async (ctx) => {
 
   let sent = 0;
   let failed = 0;
+  const failedChatIds = [];
 
   for (const user of allUsers) {
     try {
@@ -215,15 +216,18 @@ bot.command('confirm_broadcast', async (ctx) => {
       await new Promise(r => setTimeout(r, 50));
     } catch {
       failed++;
+      failedChatIds.push(user.chat_id);
     }
   }
 
   broadcastPending.delete('message');
   broadcastPending.delete('userCount');
 
-  await ctx.replyWithMarkdown(
-    `✅ *Broadcast complete*\n\n📤 Sent: *${sent}* (${total})\n❌ Failed: *${failed}*`
-  );
+  let result = `✅ *Broadcast complete*\n\n📤 Sent: *${sent}* (${total})\n❌ Failed: *${failed}*`;
+  if (failedChatIds.length > 0) {
+    result += `\n\n❌ Failed users:\n\`${failedChatIds.join(', ')}\``;
+  }
+  await ctx.replyWithMarkdown(result);
 });
 
 bot.command('cancel_broadcast', async (ctx) => {
