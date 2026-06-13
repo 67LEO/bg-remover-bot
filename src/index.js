@@ -1,6 +1,6 @@
 const { Telegraf, Markup } = require('telegraf');
 const config = require('./config');
-const { getMask, getUpscale, generateImage } = require('./processor');
+const { getMask, getUpscale, generateImage, ContentViolationError } = require('./processor');
 const { applyMask } = require('./image');
 const db = require('./db');
 const adminBot = require('./admin-bot');
@@ -751,7 +751,11 @@ async function generateImageAsync(ctx, chatId, text, userStats, dailyUsed, msg, 
   } catch (err) {
     console.error('=== ERROR ===');
     console.error('Message:', err.message);
-    await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Please try again later.');
+    if (err instanceof ContentViolationError) {
+      await ctx.telegram.sendMessage(chatId, '🚫 Your prompt was rejected by the AI content filter. Please try a different, family-friendly description.');
+    } else {
+      await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Please try again later.');
+    }
   } finally {
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
   }

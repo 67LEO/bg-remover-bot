@@ -82,8 +82,8 @@ bot.command('tickets', async (ctx) => {
 
   let msg = `📋 *Open Tickets (${tickets.length})*\n\n`;
   tickets.slice(0, 10).forEach(t => {
-    const name = t.first_name || t.username || `User ${t.chat_id}`;
-    msg += `#${t.id} — ${name}\n» ${t.message.substring(0, 80)}${t.message.length > 80 ? '...' : ''}\n\n`;
+    const name = escMd(t.first_name || t.username || `User ${t.chat_id}`);
+    msg += `#${t.id} — ${name}\n» ${escMd(t.message).substring(0, 80)}${t.message.length > 80 ? '...' : ''}\n\n`;
   });
   if (tickets.length > 10) msg += `...and ${tickets.length - 10} more\n`;
   msg += 'Use `/reply <id> <msg>` or `/close <id>`';
@@ -97,7 +97,7 @@ bot.command('payments', async (ctx) => {
 
   let msg = `📋 *Pending Payments (${orders.length})*\n\n`;
   orders.slice(0, 10).forEach(o => {
-    const name = o.first_name || o.username || `User ${o.chat_id}`;
+    const name = escMd(o.first_name || o.username || `User ${o.chat_id}`);
     const hasSS = o.screenshot_file_id ? '📸' : '❌';
     msg += `${o.order_ref} — ${name} — ₹${o.amount} ${hasSS}\n`;
     msg += `» ${o.plan} | ${new Date(o.created_at).toLocaleDateString()}\n\n`;
@@ -114,7 +114,7 @@ bot.command('premiumusers', async (ctx) => {
 
   let msg = `👑 *Premium Users (${users.length})*\n\n`;
   users.slice(0, 20).forEach((u, i) => {
-    const name = u.first_name || u.username || 'User';
+    const name = escMd(u.first_name || u.username || 'User');
     const plan = u.plan || '—';
     const expired = u.premium_until ? new Date(u.premium_until).toLocaleDateString() : 'Lifetime';
     const ref = u.order_ref || (u.ticket_id ? `Ticket #${u.ticket_id}` : '—');
@@ -142,7 +142,7 @@ bot.command('users', async (ctx) => {
 
   let msg = `👥 *Users (Page ${page}/${totalPages})* — Total: ${total}\n\n`;
   slice.forEach((u, i) => {
-    const name = u.first_name || u.username || 'User';
+    const name = escMd(u.first_name || u.username || 'User');
     const premium = u.is_premium ? ' 👑' : '';
     msg += `${start + i + 1}. ${name}\n   🆔 \`${u.chat_id}\` — ${u.total_uses} uses${premium}\n\n`;
   });

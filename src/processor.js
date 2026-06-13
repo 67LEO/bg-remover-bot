@@ -2,6 +2,10 @@ const config = require('./config');
 const { ensureAuth, appStartup } = require('./firebase');
 const sharp = require('sharp');
 
+class ContentViolationError extends Error {
+  constructor(msg) { super(msg); this.name = 'ContentViolationError'; }
+}
+
 class Semaphore {
   constructor(max) { this.max = max; this.current = 0; this.queue = []; }
   async acquire() {
@@ -174,7 +178,11 @@ async function generateImage(prompt, style = 'ultra-realistic', size = 'SQUARE_H
           break;
         }
         if (event.eventType === 'error') {
-          throw new Error(`AI gen error: ${event.errorMessage || 'Unknown'}`);
+          const errMsg = event.errorMessage || 'Unknown';
+          if (errMsg.toLowerCase().includes('content polic')) {
+            throw new ContentViolationError(errMsg);
+          }
+          throw new Error(`AI gen error: ${errMsg}`);
         }
       } catch (e) {
         if (e.message.startsWith('AI gen error')) throw e;
@@ -189,4 +197,4 @@ async function generateImage(prompt, style = 'ultra-realistic', size = 'SQUARE_H
   });
 }
 
-module.exports = { getMask, getUpscale, generateImage };
+module.exports = { getMask, getUpscale, generateImage, ContentViolationError };
