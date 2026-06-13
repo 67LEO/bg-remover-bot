@@ -210,7 +210,7 @@ bot.command('confirm_broadcast', async (ctx) => {
 
   for (const user of allUsers) {
     try {
-      await mainBot.telegram.sendMessage(user.chat_id, escMd(msg), { parse_mode: 'Markdown' });
+      await mainBot.telegram.sendMessage(user.chat_id, msg);
       sent++;
       await new Promise(r => setTimeout(r, 50));
     } catch {
