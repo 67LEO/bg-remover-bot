@@ -92,17 +92,26 @@ bot.command('tickets', async (ctx) => {
 });
 
 bot.command('payments', async (ctx) => {
-  const orders = await db.getPendingPayments();
-  if (!orders.length) return ctx.reply('✅ No pending payments.');
+  const parts = ctx.message.text.split(' ');
+  const page = Math.max(1, parseInt(parts[1]) || 1);
+  const perPage = 10;
 
-  let msg = `📋 *Pending Payments (${orders.length})*\n\n`;
-  orders.slice(0, 10).forEach(o => {
+  const allOrders = await db.getPendingPayments();
+  if (!allOrders.length) return ctx.reply('✅ No pending payments with screenshots.');
+
+  const total = allOrders.length;
+  const totalPages = Math.ceil(total / perPage) || 1;
+  const start = (page - 1) * perPage;
+  const slice = allOrders.slice(start, start + perPage);
+
+  let msg = `📋 *Pending Payments (Page ${page}/${totalPages})* — Total: ${total}\n\n`;
+  slice.forEach(o => {
     const name = escMd(o.first_name || o.username || `User ${o.chat_id}`);
-    const hasSS = o.screenshot_file_id ? '📸' : '❌';
-    msg += `${o.order_ref} — ${name} — ₹${o.amount} ${hasSS}\n`;
+    msg += `${o.order_ref} — ${name} — ₹${o.amount}\n`;
     msg += `» ${o.plan} | ${new Date(o.created_at).toLocaleDateString()}\n\n`;
   });
-  if (orders.length > 10) msg += `...and ${orders.length - 10} more\n`;
+
+  if (page < totalPages) msg += `Next: /payments ${page + 1}\n`;
   msg += 'Use `/activate <ref> <plan>` to confirm';
 
   await ctx.replyWithMarkdown(msg);

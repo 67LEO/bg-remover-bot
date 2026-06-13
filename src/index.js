@@ -500,14 +500,12 @@ async function handleBuyPlan(ctx, plan) {
       {
         caption:
           `✨ *${planInfo.label} Premium — ₹${planInfo.price}* ✨\n\n` +
-          `🎯 *Benefits:*\n` +
-          `✅ Unlimited background removal\n` +
-          `✅ 4x HD Upscale\n` +
-          `✅ AI Image Generation\n` +
-          `✅ AI Video Generation\n` +
-          `✅ AI Voice Generation\n\n` +
-          `📌 *Step 1:* Scan QR & pay ₹${planInfo.price}\n` +
-          `📌 *Step 2:* Send payment screenshot here\n\n` +
+          `━━━━━━━━━━━━━━━━━━━\n` +
+          `📌 *HOW TO PAY:*\n\n` +
+          `1️⃣ Scan the QR above & pay ₹${planInfo.price}\n\n` +
+          `2️⃣ Send the *payment screenshot* as a 📸 PHOTO\n` +
+          `   ⚠️ Do NOT send text messages\n` +
+          `━━━━━━━━━━━━━━━━━━━\n\n` +
           `Cancel? /cancel`,
         parse_mode: 'Markdown'
       }
@@ -627,9 +625,13 @@ bot.on('text', async (ctx) => {
 
   if (pendingPayment.has(chatId)) {
     return await ctx.replyWithMarkdown(
-      '❌ Please send the payment *screenshot* (photo), not text.\n\n' +
-      'Scan the QR code, pay, and send the screenshot here.\n' +
-      'Cancel? /cancel'
+      '📸 *INVALID INPUT — Send a PHOTO, not text*\n\n' +
+      '━━━━━━━━━━━━━━━━━━━\n' +
+      '⚠️ You have a *pending payment*.\n\n' +
+      '✅ Already paid?: Send the *payment screenshot* photo here\n' +
+      '❌ Not yet paid?: Check the QR code above and pay first\n\n' +
+      'Cancel this order? → /cancel\n' +
+      '━━━━━━━━━━━━━━━━━━━'
     );
   }
 

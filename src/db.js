@@ -269,7 +269,7 @@ async function getPendingPayments() {
     `SELECT p.*, u.first_name, u.username
      FROM payment_orders p
      LEFT JOIN users u ON u.chat_id = p.chat_id
-     WHERE p.status = 'pending'
+     WHERE p.status = 'pending' AND p.screenshot_file_id IS NOT NULL
      ORDER BY p.id ASC`
   );
   return r.rows;
