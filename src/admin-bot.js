@@ -408,5 +408,21 @@ bot.command('debug', async (ctx) => {
   await ctx.reply(msg, { parse_mode: 'Markdown' });
 });
 
+bot.telegram.setMyCommands([
+  { command: 'tickets', description: '📋 Open support tickets' },
+  { command: 'payments', description: '💳 Pending payment orders' },
+  { command: 'premiumusers', description: '👑 Active premium users' },
+  { command: 'users', description: '👥 List all users' },
+  { command: 'request', description: '📸 Ask user for new screenshot' },
+  { command: 'activate', description: '✅ Activate premium (ticket/order)' },
+  { command: 'deactivate', description: '❌ Remove premium from user' },
+  { command: 'reply', description: '💬 Reply to support ticket' },
+  { command: 'close', description: '🔒 Close support ticket' },
+  { command: 'send', description: '📤 DM any user' },
+  { command: 'broadcast', description: '📢 Broadcast to all users' },
+  { command: 'admin', description: '📊 Bot analytics' },
+  { command: 'debug', description: '🔧 System status' },
+]).catch(() => {});
+
 module.exports = bot;
 }

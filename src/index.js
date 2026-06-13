@@ -963,6 +963,19 @@ async function startBot() {
   const mainWebhook = baseUrl ? baseUrl + '/webhook' : null;
   const adminWebhook = baseUrl && config.ADMIN_BOT_TOKEN ? baseUrl + '/admin-webhook' : null;
 
+  await bot.telegram.setMyCommands([
+    { command: 'start', description: '👋 Welcome' },
+    { command: 'help', description: '📖 How to use' },
+    { command: 'imagine', description: '🎨 AI image from text' },
+    { command: 'upscale', description: '🔍 4x HD upscale' },
+    { command: 'video', description: '🎬 AI video from text' },
+    { command: 'voice', description: '🎤 Text to speech' },
+    { command: 'share', description: '🤝 Referral & earn unlimited' },
+    { command: 'stats', description: '📊 Your usage stats' },
+    { command: 'support', description: '💬 Contact support' },
+    { command: 'premium', description: '⭐ Buy premium' },
+  ]).catch(() => {});
+
   if (mainWebhook) {
     await bot.telegram.setWebhook(mainWebhook, { drop_pending_updates: true });
     console.log('Main webhook set:', mainWebhook);
