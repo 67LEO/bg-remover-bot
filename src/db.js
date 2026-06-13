@@ -26,70 +26,75 @@ async function query(text, params) {
 
 async function init() {
   try {
-    await query(`
-      CREATE TABLE IF NOT EXISTS users (
-        chat_id BIGINT PRIMARY KEY,
-        first_name TEXT,
-        username TEXT,
-        joined_at TIMESTAMPTZ DEFAULT NOW(),
-        total_uses INTEGER DEFAULT 0,
-        is_premium BOOLEAN DEFAULT FALSE,
-        premium_until TIMESTAMPTZ
-      );
-      CREATE TABLE IF NOT EXISTS daily_usage (
-        chat_id BIGINT,
-        date DATE,
-        count INTEGER DEFAULT 0,
-        PRIMARY KEY (chat_id, date)
-      );
-      CREATE TABLE IF NOT EXISTS referrals (
-        id SERIAL PRIMARY KEY,
-        referrer_id BIGINT NOT NULL,
-        referee_id BIGINT NOT NULL UNIQUE,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-      CREATE TABLE IF NOT EXISTS images (
-        id SERIAL PRIMARY KEY,
-        chat_id BIGINT NOT NULL,
-        original_size INTEGER,
-        result_size INTEGER,
-        type TEXT NOT NULL DEFAULT 'bg_remove',
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-      ALTER TABLE images ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'bg_remove';
-      CREATE TABLE IF NOT EXISTS support_tickets (
-        id SERIAL PRIMARY KEY,
-        chat_id BIGINT NOT NULL,
-        message TEXT NOT NULL,
-        status TEXT DEFAULT 'open',
-        admin_reply TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        replied_at TIMESTAMPTZ
-      );
-      CREATE TABLE IF NOT EXISTS user_subscriptions (
-        id SERIAL PRIMARY KEY,
-        chat_id BIGINT NOT NULL,
-        feature TEXT NOT NULL DEFAULT 'all_access',
-        plan TEXT NOT NULL,
-        active BOOLEAN DEFAULT TRUE,
-        starts_at TIMESTAMPTZ DEFAULT NOW(),
-        expires_at TIMESTAMPTZ,
-        activated_by TEXT DEFAULT 'admin',
-        ticket_id INTEGER,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-      CREATE TABLE IF NOT EXISTS payment_orders (
-        id SERIAL PRIMARY KEY,
-        order_ref TEXT UNIQUE NOT NULL,
-        chat_id BIGINT NOT NULL,
-        plan TEXT NOT NULL,
-        amount INTEGER NOT NULL,
-        status TEXT DEFAULT 'pending',
-        screenshot_file_id TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        confirmed_at TIMESTAMPTZ
-      );
-    `);
+    const client = await pool.connect();
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS users (
+          chat_id BIGINT PRIMARY KEY,
+          first_name TEXT,
+          username TEXT,
+          joined_at TIMESTAMPTZ DEFAULT NOW(),
+          total_uses INTEGER DEFAULT 0,
+          is_premium BOOLEAN DEFAULT FALSE,
+          premium_until TIMESTAMPTZ
+        );
+        CREATE TABLE IF NOT EXISTS daily_usage (
+          chat_id BIGINT,
+          date DATE,
+          count INTEGER DEFAULT 0,
+          PRIMARY KEY (chat_id, date)
+        );
+        CREATE TABLE IF NOT EXISTS referrals (
+          id SERIAL PRIMARY KEY,
+          referrer_id BIGINT NOT NULL,
+          referee_id BIGINT NOT NULL UNIQUE,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS images (
+          id SERIAL PRIMARY KEY,
+          chat_id BIGINT NOT NULL,
+          original_size INTEGER,
+          result_size INTEGER,
+          type TEXT NOT NULL DEFAULT 'bg_remove',
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        ALTER TABLE images ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'bg_remove';
+        CREATE TABLE IF NOT EXISTS support_tickets (
+          id SERIAL PRIMARY KEY,
+          chat_id BIGINT NOT NULL,
+          message TEXT NOT NULL,
+          status TEXT DEFAULT 'open',
+          admin_reply TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          replied_at TIMESTAMPTZ
+        );
+        CREATE TABLE IF NOT EXISTS user_subscriptions (
+          id SERIAL PRIMARY KEY,
+          chat_id BIGINT NOT NULL,
+          feature TEXT NOT NULL DEFAULT 'all_access',
+          plan TEXT NOT NULL,
+          active BOOLEAN DEFAULT TRUE,
+          starts_at TIMESTAMPTZ DEFAULT NOW(),
+          expires_at TIMESTAMPTZ,
+          activated_by TEXT DEFAULT 'admin',
+          ticket_id INTEGER,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS payment_orders (
+          id SERIAL PRIMARY KEY,
+          order_ref TEXT UNIQUE NOT NULL,
+          chat_id BIGINT NOT NULL,
+          plan TEXT NOT NULL,
+          amount INTEGER NOT NULL,
+          status TEXT DEFAULT 'pending',
+          screenshot_file_id TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          confirmed_at TIMESTAMPTZ
+        );
+      `);
+    } finally {
+      client.release();
+    }
     console.log('Database tables ready');
   } catch (err) {
     console.error('Database init error:', err.message);
