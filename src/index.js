@@ -38,9 +38,24 @@ function parseReferral(ctx) {
   return null;
 }
 
-bot.use((ctx, next) => {
-  if (ctx.message && ctx.chat && !checkRateLimit(ctx.chat.id)) {
-    return ctx.reply('⏳ Too many requests. Please slow down and try again in a minute.');
+bot.use(async (ctx, next) => {
+  if (ctx.message && ctx.chat) {
+    const chatId = ctx.chat.id;
+    if (premiumCache.has(chatId)) return next();
+
+    const result = checkRateLimit(chatId);
+    if (!result.ok) {
+      const stats = await db.getUserStats(chatId).catch(() => null);
+      if (stats?.isPremium) {
+        premiumCache.add(chatId);
+        return next();
+      }
+      const waitSec = Math.ceil(result.remaining / 1000);
+      return await ctx.replyWithMarkdown(
+        `⏳ *Too many requests!*\n\nPlease wait *~${waitSec}s* before sending the next request.`,
+        Markup.inlineKeyboard([Markup.button.callback('⭐ Go Premium', 'buy_monthly')])
+      );
+    }
   }
   return next();
 });
@@ -558,6 +573,21 @@ setInterval(() => {
   for (const [k, v] of rateLimitMap) { if (now - v.ts > 60000) rateLimitMap.delete(k); }
 }, 60000);
 
+const premiumCache = new Set();
+
+async function refreshPremiumCache() {
+  try {
+    const users = await db.getPremiumUsers();
+    const now = new Date();
+    premiumCache.clear();
+    users
+      .filter(u => !u.premium_until || new Date(u.premium_until) > now)
+      .forEach(u => premiumCache.add(Number(u.chat_id)));
+  } catch {}
+}
+refreshPremiumCache();
+setInterval(refreshPremiumCache, 300000);
+
 const RATE_LIMIT = 5;
 const RATE_WINDOW = 60000;
 const rateLimitMap = new Map();
@@ -566,12 +596,12 @@ function checkRateLimit(chatId) {
   const now = Date.now();
   const entry = rateLimitMap.get(chatId);
   if (entry && now - entry.ts < RATE_WINDOW) {
-    if (entry.count >= RATE_LIMIT) return false;
+    if (entry.count >= RATE_LIMIT) return { ok: false, remaining: RATE_WINDOW - (now - entry.ts) };
     entry.count++;
   } else {
     rateLimitMap.set(chatId, { ts: now, count: 1 });
   }
-  return true;
+  return { ok: true };
 }
 
 function sendNotification(msg) {
