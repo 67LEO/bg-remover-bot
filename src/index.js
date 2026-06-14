@@ -1,6 +1,6 @@
 const { Telegraf, Markup } = require('telegraf');
 const config = require('./config');
-const { getMask, getUpscale, generateImage, ContentViolationError } = require('./processor');
+const { getMask, getUpscale, generateImage, getAiBackground, ContentViolationError } = require('./processor');
 const { applyMask } = require('./image');
 const db = require('./db');
 const adminBot = require('./admin-bot');
@@ -424,6 +424,156 @@ bot.action('imagine_cancel', async (ctx) => {
   await ctx.editMessageText('❌ Cancelled. Use /imagine to try again.');
 });
 
+bot.action('ai_bg', async (ctx) => {
+  const chatId = ctx.chat.id;
+  const cached = recentImage.get(chatId);
+  if (!cached?.imageBuffer) {
+    return ctx.answerCbQuery('Send a photo first!');
+  }
+
+  const { first_name: name, username } = ctx.chat;
+  await db.upsertUser(chatId, name, username);
+
+  const userStats = await db.getUserStats(chatId);
+  const dailyUsed = userStats?.dailyUsed ?? 0;
+  if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
+    return await ctx.replyWithMarkdown(
+      `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
+      '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
+      Markup.inlineKeyboard([
+        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images, voice & video 🚀`)],
+        [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
+      ])
+    );
+  }
+
+  await ctx.answerCbQuery();
+  const rows = Object.entries(AI_BG_TEMPLATES).map(([key, t]) =>
+    [Markup.button.callback(t.label, `ai_bg_tpl_${key}`)]
+  );
+  rows.push([Markup.button.callback('✏️ Custom Prompt', 'ai_bg_custom')]);
+  rows.push([Markup.button.callback('❌ Cancel', 'ai_bg_cancel')]);
+
+  await ctx.reply('🎨 *Choose a background style or describe your own:*', {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: rows },
+  });
+});
+
+bot.action(/ai_bg_tpl_(.+)/, async (ctx) => {
+  const chatId = ctx.chat.id;
+  const templateKey = ctx.match[1];
+  const template = AI_BG_TEMPLATES[templateKey];
+  if (!template) return ctx.answerCbQuery('Invalid template');
+
+  await ctx.answerCbQuery(`Generating: ${template.label}`);
+  await processAiBackground(ctx, chatId, template.prompt);
+});
+
+bot.action('ai_bg_custom', async (ctx) => {
+  const chatId = ctx.chat.id;
+  aiBgSession.set(chatId, { step: 'prompt', _ts: Date.now() });
+  await ctx.answerCbQuery();
+  await ctx.reply('✏️ *Describe the background you want:*\n\nExample: `a sunny beach with palm trees and ocean waves`\n\nSend /cancel to abort.', {
+    parse_mode: 'Markdown',
+  });
+});
+
+bot.action('ai_bg_cancel', async (ctx) => {
+  const chatId = ctx.chat.id;
+  aiBgSession.delete(chatId);
+  await ctx.answerCbQuery('Cancelled');
+  await ctx.editMessageText('❌ Cancelled.');
+});
+
+async function processAiBackground(ctx, chatId, prompt) {
+  const cached = recentImage.get(chatId);
+  if (!cached?.imageBuffer) {
+    return ctx.reply('❌ No image found. Send a photo first.');
+  }
+
+  const { first_name: name, username } = ctx.chat;
+  await db.upsertUser(chatId, name, username);
+
+  const userStats = await db.getUserStats(chatId);
+  const dailyUsed = userStats?.dailyUsed ?? 0;
+  if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
+    return await ctx.replyWithMarkdown(
+      `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
+      '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
+      Markup.inlineKeyboard([
+        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images, voice & video 🚀`)],
+        [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
+      ])
+    );
+  }
+
+  const msg = await ctx.reply('🎨 Generating AI background...');
+
+  try {
+    let maskBuffer = cached.maskBuffer;
+    if (!maskBuffer && cached.imageBuffer) {
+      maskBuffer = await getMask(cached.imageBuffer);
+      cached.maskBuffer = maskBuffer;
+    }
+
+    const resultBuffer = await getAiBackground(cached.imageBuffer, maskBuffer, prompt);
+    recentImage.set(chatId, { imageBuffer: cached.imageBuffer, maskBuffer, _ts: Date.now() });
+
+    await ctx.telegram.sendDocument(
+      chatId,
+      { source: resultBuffer, filename: 'ai-bg-result.jpg' },
+      {
+        caption: userStats?.isPremium
+          ? '🎨 Background replaced! (Unlimited)'
+          : `🎨 Background replaced! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`,
+        reply_markup: {
+          inline_keyboard: [
+            [Markup.button.callback('🔄 Try Again', 'ai_bg_retry'), Markup.button.callback('✏️ New Prompt', 'ai_bg_custom')],
+            [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
+          ],
+        },
+      }
+    );
+    await db.incrementUsage(chatId);
+    await db.logImage(chatId, cached.imageBuffer.length, resultBuffer.length, 'ai_bg');
+  } catch (err) {
+    console.error('AI BG error:', err.message);
+    await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Please try again later.');
+  } finally {
+    await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
+  }
+}
+
+bot.action('ai_bg_retry', async (ctx) => {
+  const chatId = ctx.chat.id;
+  const cached = recentImage.get(chatId);
+  if (!cached?.imageBuffer || !cached?.maskBuffer) {
+    return ctx.answerCbQuery('No cached image. Send a photo first.');
+  }
+
+  const { first_name: name, username } = ctx.chat;
+  await db.upsertUser(chatId, name, username);
+
+  const userStats = await db.getUserStats(chatId);
+  const dailyUsed = userStats?.dailyUsed ?? 0;
+  if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
+    return ctx.answerCbQuery('Daily limit reached!');
+  }
+
+  await ctx.answerCbQuery();
+  const rows = Object.entries(AI_BG_TEMPLATES).map(([key, t]) =>
+    [Markup.button.callback(t.label, `ai_bg_tpl_${key}`)]
+  );
+  rows.push([Markup.button.callback('✏️ Custom Prompt', 'ai_bg_custom')]);
+  rows.push([Markup.button.callback('❌ Cancel', 'ai_bg_cancel')]);
+
+  await ctx.reply('🎨 *Try a different background:*', {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: rows },
+  });
+});
+
 async function processGeneratedImage(ctx, chatId, action) {
   const entry = lastGenImage.get(chatId);
   if (!entry) return ctx.answerCbQuery('No recent image found. Generate one with /imagine first.');
@@ -475,7 +625,7 @@ async function processGeneratedImage(ctx, chatId, action) {
     await ctx.telegram.sendDocument(
       chatId,
       { source: resultBuffer, filename },
-      { caption: label, reply_markup: shareButton(chatId).reply_markup }
+      { caption: label, reply_markup: resultButtons(chatId).reply_markup }
     );
     await db.incrementUsage(chatId);
     await db.logImage(chatId, imageBuffer.length, resultBuffer.length, type);
@@ -558,6 +708,11 @@ bot.command('cancel', async (ctx) => {
     await ctx.reply('✅ Image generation cancelled. Use /imagine to start again.');
     return;
   }
+  if (aiBgSession.has(chatId)) {
+    aiBgSession.delete(chatId);
+    await ctx.reply('✅ AI background cancelled. Send a photo to try again.');
+    return;
+  }
   await ctx.reply('No pending operation to cancel.');
 });
 
@@ -566,6 +721,17 @@ const pendingPayment = new Map();
 const voiceSession = new Map();
 const imagineSession = new Map();
 const lastGenImage = new Map();
+const aiBgSession = new Map();
+const recentImage = new Map();
+
+const AI_BG_TEMPLATES = {
+  beach: { label: '🏖️ Beach', prompt: 'Sunny tropical beach with ocean waves and palm trees, natural golden hour lighting' },
+  office: { label: '🏢 Office', prompt: 'Modern professional office interior with desk, plants and bookshelf, bright natural lighting' },
+  nature: { label: '🌿 Nature', prompt: 'Lush forest with sun rays filtering through trees, peaceful natural setting' },
+  city: { label: '🌃 City', prompt: 'Night city skyline with bokeh lights, urban atmosphere, cinematic mood' },
+  mountains: { label: '⛰️ Mountains', prompt: 'Snow-capped mountains with blue sky and clouds, majestic landscape' },
+  studio: { label: '⚪ Studio', prompt: 'Clean white studio background with soft gradient lighting, professional look' },
+};
 
 const SESSION_TTL = 60 * 60 * 1000;
 setInterval(() => {
@@ -574,6 +740,8 @@ setInterval(() => {
   for (const [k, v] of voiceSession) { if (now - (v._ts || 0) > SESSION_TTL) voiceSession.delete(k); }
   for (const [k, v] of imagineSession) { if (now - (v._ts || 0) > SESSION_TTL) imagineSession.delete(k); }
   for (const [k, v] of lastGenImage) { if (now - (v.timestamp || 0) > SESSION_TTL) lastGenImage.delete(k); }
+  for (const [k, v] of aiBgSession) { if (now - (v._ts || 0) > SESSION_TTL) aiBgSession.delete(k); }
+  for (const [k, v] of recentImage) { if (now - (v._ts || 0) > SESSION_TTL) recentImage.delete(k); }
   for (const [k, v] of rateLimitMap) { if (now - v.ts > 60000) rateLimitMap.delete(k); }
 }, 60000);
 
@@ -689,6 +857,17 @@ bot.on('text', async (ctx) => {
     );
   }
 
+  const aiBg = aiBgSession.get(chatId);
+  if (aiBg?.step === 'prompt') {
+    const text = ctx.message.text.trim();
+    if (!text || text.length > 500) {
+      return await ctx.reply('❌ Text must be 1-500 characters. Send again or /cancel');
+    }
+    aiBgSession.delete(chatId);
+    await processAiBackground(ctx, chatId, text);
+    return;
+  }
+
   const session = voiceSession.get(chatId);
   if (session?.step === 'script') {
     const text = ctx.message.text.trim();
@@ -743,7 +922,7 @@ async function processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, p
     if (!response.ok) throw new Error(`Download failed: ${response.status}`);
     const imageBuffer = Buffer.from(await response.arrayBuffer());
 
-    let resultBuffer;
+    let resultBuffer, maskBuffer;
     if (doUpscale) {
       resultBuffer = await getUpscale(imageBuffer);
       await db.logImage(chatId, imageBuffer.length, resultBuffer.length, 'upscale');
@@ -754,11 +933,12 @@ async function processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, p
           caption: userStats?.isPremium
             ? '✨ 4x HD Upscale done! (Unlimited)'
             : `✨ 4x HD Upscale done! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`,
-          reply_markup: shareButton(chatId).reply_markup,
+          reply_markup: resultButtons(chatId).reply_markup,
         }
       );
+      recentImage.set(chatId, { imageBuffer, _ts: Date.now() });
     } else {
-      const maskBuffer = await getMask(imageBuffer);
+      maskBuffer = await getMask(imageBuffer);
       resultBuffer = await applyMask(imageBuffer, maskBuffer);
       await db.logImage(chatId, imageBuffer.length, resultBuffer.length, 'bg_remove');
       await ctx.telegram.sendDocument(
@@ -768,9 +948,10 @@ async function processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, p
           caption: userStats?.isPremium
             ? '✨ Background removed! (Unlimited)'
             : `✨ Background removed! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`,
-          reply_markup: shareButton(chatId).reply_markup,
+          reply_markup: resultButtons(chatId).reply_markup,
         }
       );
+      recentImage.set(chatId, { imageBuffer, maskBuffer, _ts: Date.now() });
     }
 
     await db.incrementUsage(chatId);
@@ -781,6 +962,15 @@ async function processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, p
   } finally {
     await ctx.telegram.deleteMessage(chatId, processingMsg.message_id).catch(() => {});
   }
+}
+
+function resultButtons(chatId) {
+  const sb = shareButton(chatId);
+  return Markup.inlineKeyboard([
+    [Markup.button.switchToChat('📤 Share with Friends', `Try @${process.env.BOT_USERNAME || 'AiBgRemover_Bot'} — AI image editor bot 🚀`)],
+    [Markup.button.callback('🎨 AI Background', 'ai_bg')],
+    [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
+  ]);
 }
 
 async function generateImageAsync(ctx, chatId, text, userStats, dailyUsed, msg, size = 'SQUARE_HD') {
@@ -795,13 +985,15 @@ async function generateImageAsync(ctx, chatId, text, userStats, dailyUsed, msg, 
         reply_markup: {
           inline_keyboard: [
             [Markup.button.callback('🔄 Upscale 4x', 'gen_upscale'),
-             Markup.button.callback('✂️ Remove BG', 'gen_bgremove')],
+             Markup.button.callback('✂️ Remove BG', 'gen_bgremove'),
+             Markup.button.callback('🎨 AI BG', 'ai_bg')],
             ...shareButton(chatId).reply_markup.inline_keyboard,
           ],
         },
       }
     );
     lastGenImage.set(chatId, { buffer: imgBuf, timestamp: Date.now() });
+    recentImage.set(chatId, { imageBuffer: imgBuf, _ts: Date.now() });
     await db.incrementUsage(chatId);
     await db.logImage(chatId, imgBuf.length, imgBuf.length, 'imagine');
   } catch (err) {
@@ -1015,6 +1207,7 @@ async function startBot() {
     { command: 'stats', description: '📊 Your usage stats' },
     { command: 'support', description: '💬 Contact support' },
     { command: 'premium', description: '⭐ Buy premium' },
+    { command: 'cancel', description: '❌ Cancel pending operation' },
   ]).catch(() => {});
 
   if (mainWebhook) {

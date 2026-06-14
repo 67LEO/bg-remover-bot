@@ -1,6 +1,7 @@
 const config = require('./config');
 const { ensureAuth, appStartup } = require('./firebase');
 const sharp = require('sharp');
+const crypto = require('crypto');
 
 class ContentViolationError extends Error {
   constructor(msg) { super(msg); this.name = 'ContentViolationError'; }
@@ -197,4 +198,46 @@ async function generateImage(prompt, style = 'ultra-realistic', size = 'SQUARE_H
   });
 }
 
-module.exports = { getMask, getUpscale, generateImage, ContentViolationError };
+async function getAiBackground(imageBuffer, maskBuffer, prompt) {
+  return apiSem.run(async () => {
+    await appStartup();
+    const { idToken } = await ensureAuth();
+
+    const formData = new FormData();
+    formData.append('imageFile', new Blob([imageBuffer], { type: 'image/jpeg' }), 'image.png');
+    formData.append('maskFile', new Blob([maskBuffer], { type: 'image/png' }), 'mask.png');
+    formData.append('experimentFlag', 'default');
+    formData.append('filterPrompt', '');
+    formData.append('prompt', prompt);
+    formData.append('negativePrompt', '');
+    formData.append('sceneUuid', crypto.randomUUID());
+    formData.append('seed', String(Math.floor(Math.random() * 1000000)));
+    formData.append('aspectRatio', '1:1');
+    formData.append('expandPrompt', 'true');
+
+    const res = await fetch(config.AI_BG_API_URL, {
+      method: 'POST',
+      headers: {
+        authorization: idToken,
+        'pr-app-version': config.APP_VER_HEADER,
+        'pr-platform': config.PLATFORM_HEADER,
+        'pr-current-space-entitlement': config.ENTITLEMENT_HEADER,
+        'pr-user-bcp-language': config.LANG_HEADER,
+        'pr-telemetry-enabled': config.TELEMETRY_HEADER,
+        'pr-main-subject-id': 'not_set',
+        'pr-user-timezone': config.TZ_HEADER,
+        'pr-feature-name': 'ai_background',
+      },
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`AI bg failed: ${res.status} ${err.slice(0, 300)}`);
+    }
+
+    return Buffer.from(await res.arrayBuffer());
+  });
+}
+
+module.exports = { getMask, getUpscale, generateImage, getAiBackground, ContentViolationError };

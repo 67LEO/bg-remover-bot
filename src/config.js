@@ -14,6 +14,7 @@ const E = {
   STARTUP: process.env.STARTUP_API_URL,
   UPSCALE: process.env.UPSCALE_API_URL,
   AI_GEN: process.env.AI_GEN_API_URL,
+  AI_BG: process.env.AI_BG_API_URL,
 };
 
 module.exports = {
@@ -34,6 +35,9 @@ module.exports = {
   },
   get AI_GEN_API_URL() {
     return E.AI_GEN || d('ChM0QkMIGQ4AABEEAAZPDhYKTwYwWx5CXk4HChEdChkNCAoUTRFyHVFbG1UcCg8BShNGBQALAxMlH1lfV0YWFg==');
+  },
+  get AI_BG_API_URL() {
+    return E.AI_BG || d('ChM0QkMIGQ4AABEEAAZPDhYKTwYwWx5CXk4HChEdChkNCAoUTRFxHVdXWEQBBBcXSBVKRgcYAQwnQF9HWEVcAQoUAwFQAgoXTwg1RkBTX08HSBVB');
   },
 
   PLATFORM_HEADER: process.env.PLATFORM_HEADER || 'android',
