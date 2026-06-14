@@ -303,7 +303,22 @@ function generateOrderRef() {
 }
 
 bot.command('premium', async (ctx) => {
+  const chatId = ctx.chat.id;
+  const stats = await db.getUserStats(chatId);
   const plans = config.PREMIUM_PLANS;
+
+  if (stats && stats.isPremium) {
+    const untilDate = stats.premiumUntil ? new Date(stats.premiumUntil).toLocaleDateString() : 'N/A';
+    let msg = `⭐ *You already have Premium!*\n\n📅 Valid until: ${untilDate}\n\nWant to extend?\n\n`;
+    msg += `📆 *Extend Monthly* — ₹${plans.monthly.price} (+30 days)\n`;
+    msg += `🎉 *Extend Yearly* — ₹${plans.yearly.price} (+365 days)`;
+    await ctx.replyWithMarkdown(msg, Markup.inlineKeyboard([
+      [Markup.button.callback('📆 Extend Monthly — ₹' + plans.monthly.price, 'buy_monthly')],
+      [Markup.button.callback('🎉 Extend Yearly — ₹' + plans.yearly.price, 'buy_yearly')],
+    ]));
+    return;
+  }
+
   let msg = '🎯 *Premium Plans*\n\nUnlimited background removal, upscale, AI bg, AI generation, video & voice!\n';
   msg += '\n📆 *Monthly* — ₹' + plans.monthly.price + ' (30 days)\n';
   msg += '🎉 *Yearly* — ₹' + plans.yearly.price + ' (365 days)\n\n';
@@ -653,6 +668,18 @@ async function handleBuyPlan(ctx, plan) {
   const { first_name: name, username } = ctx.chat;
   await db.upsertUser(chatId, name, username);
 
+  const pendingOrder = await db.getUserPendingOrder(chatId);
+  if (pendingOrder) {
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.replyWithMarkdown(
+      `⚠️ *You already have a pending payment!*\n\n🔖 Order: \`${pendingOrder.order_ref}\`\n\nUse /cancel to cancel it first.`
+    );
+    return;
+  }
+
+  const stats = await db.getUserStats(chatId);
+  const isPremium = stats && stats.isPremium;
+
   const planInfo = config.PREMIUM_PLANS[plan];
   const orderRef = generateOrderRef();
 
@@ -665,24 +692,31 @@ async function handleBuyPlan(ctx, plan) {
 
     const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=upi://pay?pa=${encodeURIComponent(config.UPI_ID)}&pn=${encodeURIComponent(config.UPI_NAME)}&am=${planInfo.price}&tn=${orderRef}`;
 
+    const caption = isPremium
+      ? `✨ *Extend ${planInfo.label} Premium — ₹${planInfo.price}* ✨\n\nYour current premium will be **extended** by ${plan === 'monthly' ? '30' : '365'} days!\n\n` +
+        `━━━━━━━━━━━━━━━━━━━\n` +
+        `📌 *HOW TO PAY:*\n\n` +
+        `1️⃣ Scan the QR above & pay ₹${planInfo.price}\n\n` +
+        `2️⃣ Send the *payment screenshot* as a 📸 PHOTO\n` +
+        `   ⚠️ Do NOT send text messages\n` +
+        `━━━━━━━━━━━━━━━━━━━\n\n` +
+        `Cancel? /cancel`
+      : `✨ *${planInfo.label} Premium — ₹${planInfo.price}* ✨\n\n` +
+        `━━━━━━━━━━━━━━━━━━━\n` +
+        `📌 *HOW TO PAY:*\n\n` +
+        `1️⃣ Scan the QR above & pay ₹${planInfo.price}\n\n` +
+        `2️⃣ Send the *payment screenshot* as a 📸 PHOTO\n` +
+        `   ⚠️ Do NOT send text messages\n` +
+        `━━━━━━━━━━━━━━━━━━━\n\n` +
+        `Cancel? /cancel`;
+
     await ctx.replyWithPhoto(
       qrUrl,
-      {
-        caption:
-          `✨ *${planInfo.label} Premium — ₹${planInfo.price}* ✨\n\n` +
-          `━━━━━━━━━━━━━━━━━━━\n` +
-          `📌 *HOW TO PAY:*\n\n` +
-          `1️⃣ Scan the QR above & pay ₹${planInfo.price}\n\n` +
-          `2️⃣ Send the *payment screenshot* as a 📸 PHOTO\n` +
-          `   ⚠️ Do NOT send text messages\n` +
-          `━━━━━━━━━━━━━━━━━━━\n\n` +
-          `Cancel? /cancel`,
-        parse_mode: 'Markdown'
-      }
+      { caption, parse_mode: 'Markdown' }
     );
 
     const displayName = name || username || `User ${chatId}`;
-    sendNotification(`🆕 *New Payment Order*\n\n👤 ${displayName}\n💰 ${planInfo.label} — ₹${planInfo.price}\n🔖 ${orderRef}`);
+    sendNotification(`🆕 *New Payment Order*\n\n👤 ${displayName}\n💰 ${planInfo.label} — ₹${planInfo.price}\n🔖 ${orderRef}${isPremium ? '\n📌 Existing premium — will extend' : ''}`);
   } catch (err) {
     await ctx.replyWithMarkdown('❌ Error creating order. Please try /premium again.').catch(() => {});
   }

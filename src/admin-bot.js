@@ -191,7 +191,7 @@ bot.command('broadcast', async (ctx) => {
   broadcastPending.set('userCount', total);
 
   await ctx.replyWithMarkdown(
-    `📢 *Broadcast Preview*\n\nMessage:\n${text.substring(0, 200)}\n\nWill send to *${total} users*\n\nType \`/confirm_broadcast\` to proceed or \`/cancel_broadcast\` to abort.`
+    `📢 *Broadcast Preview*\n\nMessage:\n${escMd(text.substring(0, 200))}\n\nWill send to *${total} users*\n\nType \`/confirm_broadcast\` to proceed or \`/cancel_broadcast\` to abort.`
   );
 });
 

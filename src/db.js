@@ -172,6 +172,7 @@ async function getUserStats(chatId) {
     dailyUsed,
     dailyRemaining: Math.max(0, user.is_premium ? Infinity : require('./config').FREE_LIMIT_DAILY - dailyUsed),
     isPremium: !!user.is_premium,
+    premiumUntil: user.premium_until,
     referrals: await getReferralCount(chatId),
     joinedAt: user.joined_at,
   };
@@ -240,12 +241,22 @@ async function closeTicket(id) {
 
 async function activatePremiumByAdmin(chatId, plan, ticketId, adminChatId) {
   const days = plan === 'yearly' ? 365 : 30;
-  const expiresAt = new Date();
+
+  const userRows = await query('SELECT premium_until FROM users WHERE chat_id = $1', [chatId]);
+  const existingUntil = userRows.rows[0]?.premium_until;
+  const now = new Date();
+  const baseDate = (existingUntil && new Date(existingUntil) > now) ? new Date(existingUntil) : now;
+  const expiresAt = new Date(baseDate);
   expiresAt.setDate(expiresAt.getDate() + days);
 
   await query(
     'UPDATE users SET is_premium = true, premium_until = $1 WHERE chat_id = $2',
     [expiresAt, chatId]
+  );
+
+  await query(
+    "UPDATE user_subscriptions SET active = false WHERE chat_id = $1 AND active = true",
+    [chatId]
   );
 
   await query(
@@ -334,12 +345,22 @@ async function confirmPaymentOrder(orderRef, plan) {
   if (order.status !== 'pending') throw new Error('Order already processed');
 
   const days = plan === 'yearly' ? 365 : 30;
-  const expiresAt = new Date();
+
+  const userRows = await query('SELECT premium_until FROM users WHERE chat_id = $1', [order.chat_id]);
+  const existingUntil = userRows.rows[0]?.premium_until;
+  const now = new Date();
+  const baseDate = (existingUntil && new Date(existingUntil) > now) ? new Date(existingUntil) : now;
+  const expiresAt = new Date(baseDate);
   expiresAt.setDate(expiresAt.getDate() + days);
 
   await query(
     'UPDATE users SET is_premium = true, premium_until = $1 WHERE chat_id = $2',
     [expiresAt, order.chat_id]
+  );
+
+  await query(
+    "UPDATE user_subscriptions SET active = false WHERE chat_id = $1 AND active = true",
+    [order.chat_id]
   );
 
   await query(
