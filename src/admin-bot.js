@@ -30,6 +30,7 @@ bot.start(async (ctx) => {
     '   🎨 AI Image Gen — /imagine your prompt\n' +
     '   🎤 AI Voice Gen — /voice (14 languages)\n' +
     '   🎬 AI Video Gen — /video your prompt\n' +
+    '   🖼️ AI Background Replace — 🎨 AI BG after remove\n' +
     '   📊 Referral: /share for unlimited free usage\n' +
     '   💳 Premium: /premium (₹49/mo, ₹499/yr)\n\n' +
     '📋 *Admin Commands:*\n' +
@@ -421,7 +422,7 @@ bot.command('activate', async (ctx) => {
 
     await mainBot.telegram.sendMessage(
       userChatId,
-      `🎉 *Congratulations!* 🎉\n\nYour *${planLabel} Premium* plan has been activated!\n📆 Duration: ${plan === 'monthly' ? '30 days' : '365 days'} unlimited\n\n✨ Unlimited background removal\n✨ 4x HD Upscale\n✨ AI Image Generation\n✨ AI Voice Generation\n✨ AI Video Generation\n\n🔹 /stats — Check your status\n🔹 /share — Earn more rewards\n\nThank you for your support! 🙏`,
+      `🎉 *Congratulations!* 🎉\n\nYour *${planLabel} Premium* plan has been activated!\n📆 Duration: ${plan === 'monthly' ? '30 days' : '365 days'} unlimited\n\n✨ Unlimited background removal\n✨ 4x HD Upscale\n✨ AI Image Generation\n✨ AI Background Replace\n✨ AI Voice Generation\n✨ AI Video Generation\n\n🔹 /stats — Check your status\n🔹 /share — Earn more rewards\n\nThank you for your support! 🙏`,
       { parse_mode: 'Markdown' }
     ).catch(() => {
       ctx.reply('⚠️ Premium activated but user may have blocked the bot.');

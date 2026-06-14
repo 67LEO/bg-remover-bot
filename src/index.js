@@ -79,7 +79,8 @@ bot.start(async (ctx) => {
     '🔍 4x HD Upscaler\n' +
     '🎨 AI Image Generator (Flux Pro)\n' +
     '🎤 AI Voice Generator (ElevenLabs)\n' +
-    '🎬 AI Video Generator\n\n' +
+    '🎬 AI Video Generator\n' +
+    '🖼️ AI Background Replace — custom bg after remove\n\n' +
     '📌 *Commands:*\n' +
     '🖼 Send photo → Remove background\n' +
     '/upscale — 4x HD quality\n' +
@@ -99,7 +100,8 @@ bot.help(async (ctx) => {
     '🔍 *Upscale HD:* /upscale then send a photo\n' +
     '🎨 *AI Generate:* /imagine your prompt\n' +
     '🎤 *Voice Gen:* /voice — select language & voice, send text\n' +
-    '🎬 *Video Gen:* /video your prompt\n\n' +
+    '🎬 *Video Gen:* /video your prompt\n' +
+    '🖼️ *AI Background:* Tap 🎨 AI BG after removing background\n\n' +
     '🤝 *Share:* Use @AiBgRemover\\_Bot in any chat\n\n' +
      '⚡ Max 20MB per photo, max 3 min per video\n' +
       (stats?.isPremium ? '✅ *Unlimited Access*\n\n' : `🔹 Free today: *${stats?.dailyRemaining ?? config.FREE_LIMIT_DAILY}*\n\n`) +
@@ -124,7 +126,7 @@ bot.command('share', async (ctx) => {
     '• 10 friends → +3 months unlimited\n\n' +
     'Tap 👇 to share with friends!',
     Markup.inlineKeyboard([
-        [Markup.button.switchToChat('📤 Share with Friends', `Try @${botUsername} — AI image editor: remove bg, upscale, generate images, voice & video 🚀`)],
+        [Markup.button.switchToChat('📤 Share with Friends', `Try @${botUsername} — AI image editor: remove bg, upscale, AI bg, images, voice & video 🚀`)],
         [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
       [Markup.button.url('📋 Copy Link', `https://t.me/${botUsername}?start=${chatId}`)],
     ])
@@ -148,7 +150,7 @@ bot.command('voice', async (ctx) => {
       `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
       '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
       Markup.inlineKeyboard([
-        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images, voice & video 🚀`)],
+        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, AI bg, images, voice & video 🚀`)],
         [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
       ])
     );
@@ -190,7 +192,7 @@ bot.command('imagine', async (ctx) => {
       `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
       '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
       Markup.inlineKeyboard([
-        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images, voice & video 🚀`)],
+        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, AI bg, images, voice & video 🚀`)],
         [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
       ])
     );
@@ -238,7 +240,7 @@ bot.command('video', async (ctx) => {
       `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
       '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
       Markup.inlineKeyboard([
-        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images, voice & video 🚀`)],
+        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, AI bg, images, voice & video 🚀`)],
         [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
       ])
     );
@@ -302,7 +304,7 @@ function generateOrderRef() {
 
 bot.command('premium', async (ctx) => {
   const plans = config.PREMIUM_PLANS;
-  let msg = '🎯 *Premium Plans*\n\nUnlimited background removal, upscale, AI generation, video & voice!\n';
+  let msg = '🎯 *Premium Plans*\n\nUnlimited background removal, upscale, AI bg, AI generation, video & voice!\n';
   msg += '\n📆 *Monthly* — ₹' + plans.monthly.price + ' (30 days)\n';
   msg += '🎉 *Yearly* — ₹' + plans.yearly.price + ' (365 days)\n\n';
   msg += 'Select a plan below 👇';
@@ -405,7 +407,7 @@ bot.action(/imagine_size_(.+)/, async (ctx) => {
       '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
       { parse_mode: 'Markdown', reply_markup: {
         inline_keyboard: [
-          [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images, voice & video 🚀`)],
+          [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, AI bg, images, voice & video 🚀`)],
           [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
         ],
       }}
@@ -441,7 +443,7 @@ bot.action('ai_bg', async (ctx) => {
       `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
       '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
       Markup.inlineKeyboard([
-        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images, voice & video 🚀`)],
+        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, AI bg, images, voice & video 🚀`)],
         [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
       ])
     );
@@ -502,7 +504,7 @@ async function processAiBackground(ctx, chatId, prompt) {
       `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
       '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
       Markup.inlineKeyboard([
-        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images, voice & video 🚀`)],
+        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, AI bg, images, voice & video 🚀`)],
         [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
       ])
     );
@@ -592,7 +594,7 @@ async function processGeneratedImage(ctx, chatId, action) {
       `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
       '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
       Markup.inlineKeyboard([
-        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images, voice & video 🚀`)],
+        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, AI bg, images, voice & video 🚀`)],
         [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
       ])
     );
@@ -834,6 +836,7 @@ bot.on('my_chat_member', async (ctx) => {
       await ctx.replyWithMarkdown(
         '👋 *Thanks for adding me!*\n\n' +
         'Send any photo to remove background 🖼️\n' +
+        '🎨 AI Background Replace also available!\n' +
         'Or type /help to see all features\n\n' +
         'Made with ❤️ in India',
         shareButton(ctx.chat.id)
@@ -886,7 +889,7 @@ bot.on('text', async (ctx) => {
         `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
         '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
         Markup.inlineKeyboard([
-          [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images, voice & video 🚀`)],
+          [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, AI bg, images, voice & video 🚀`)],
           [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
         ])
       );
@@ -1042,9 +1045,9 @@ bot.on('inline_query', async (ctx) => {
       type: 'article',
       id: 'share',
       title: '📤 Share this bot with friends',
-      description: 'AI Background Remover, Upscaler, Image, Voice & Video Generator',
+      description: 'AI Background Remover, Upscaler, AI BG, Image, Voice & Video Generator',
       input_message_content: {
-        message_text: '🤖 *AI Image Editor Bot* — Remove bg, upscale, generate images, voice & video!\n\nSend me a photo or type /help to start 👇',
+        message_text: '🤖 *AI Image Editor Bot* — Remove bg, upscale, AI bg, generate images, voice & video!\n\nSend me a photo or type /help to start 👇',
         parse_mode: 'Markdown',
       },
       reply_markup: {
@@ -1057,9 +1060,9 @@ bot.on('inline_query', async (ctx) => {
       type: 'article',
       id: 'features',
       title: '✨ Features',
-      description: 'Background removal • 4x HD Upscale • AI Image • Voice • Video Gen',
+      description: 'Background removal • 4x HD Upscale • AI BG • AI Image • Voice • Video Gen',
       input_message_content: {
-        message_text: '🎯 *AI Image Editor Bot Features*\n\n🖼️ Send photo → Remove background instantly\n🔍 /upscale — 4x HD quality boost\n🎨 /imagine — Generate AI images\n🎤 /voice — Text to speech\n🎬 /video — AI video generation\n📊 /stats — Check usage\n\n🇮🇳 Made in India',
+        message_text: '🎯 *AI Image Editor Bot Features*\n\n🖼️ Send photo → Remove background instantly\n🔍 /upscale — 4x HD quality boost\n🎨 /imagine — Generate AI images\n🖼️ AI Background Replace after remove\n🎤 /voice — Text to speech\n🎬 /video — AI video generation\n📊 /stats — Check usage\n\n🇮🇳 Made in India',
         parse_mode: 'Markdown',
       },
       reply_markup: {
@@ -1074,7 +1077,7 @@ bot.on('inline_query', async (ctx) => {
       title: '⭐ Premium Plans',
       description: 'Unlimited everything — ₹49/month, ₹499/year',
       input_message_content: {
-        message_text: '⭐ *Premium Plans*\n\n📆 Monthly — ₹49 (30 days)\n🎉 Yearly — ₹499 (365 days)\n\nUnlimited background removal, upscale, AI generation, video & voice!\n\nType /premium in the bot to buy 👇',
+        message_text: '⭐ *Premium Plans*\n\n📆 Monthly — ₹49 (30 days)\n🎉 Yearly — ₹499 (365 days)\n\nUnlimited background removal, upscale, AI bg, AI generation, video & voice!\n\nType /premium in the bot to buy 👇',
         parse_mode: 'Markdown',
       },
       reply_markup: {
@@ -1135,7 +1138,7 @@ bot.on('photo', async (ctx) => {
       `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
       '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
       Markup.inlineKeyboard([
-        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, generate images, voice & video 🚀`)],
+        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, AI bg, images, voice & video 🚀`)],
         [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
       ])
     );
