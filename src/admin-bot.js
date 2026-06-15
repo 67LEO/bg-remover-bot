@@ -70,7 +70,7 @@ bot.command('admin', async (ctx) => {
   const top = users.slice(0, 5);
   msg += '*Top 5 Users:*\n';
   top.forEach((u, i) => {
-    const name = u.first_name || u.username || 'User';
+    const name = escMd(u.first_name || u.username || 'User');
     msg += `${i + 1}. ${name} — ${u.total_uses} images${u.is_premium ? ' 👑' : ''}\n`;
   });
   await ctx.replyWithMarkdown(msg);
