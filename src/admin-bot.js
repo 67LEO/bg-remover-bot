@@ -55,7 +55,7 @@ bot.command('admin', async (ctx) => {
   const users = await db.getAllUsers();
   const dailyActive = await db.getDailyActiveCount();
 
-  const typeLabels = { bg_remove: 'Background', upscale: 'Upscale', imagine: 'AI Image', video: 'AI Video' };
+  const typeLabels = { bg_remove: 'Background', upscale: 'Upscale', imagine: 'AI Image', video: 'AI Video', bg_replace: 'BG Replace' };
   const fmtType = (t) => typeLabels[t] || t;
   const breakdown = (obj) => Object.entries(obj).map(([k, v]) => `${fmtType(k)}: ${v}`).join(', ');
 
