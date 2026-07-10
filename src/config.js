@@ -1,21 +1,10 @@
 require('dotenv').config();
 
-const KEY = Buffer.from('bg@2026!secret#key', 'utf8');
-
-function d(s) {
-  const b = Buffer.from(s, 'base64');
-  const r = Buffer.alloc(b.length);
-  for (let i = 0; i < b.length; i++) r[i] = b[i] ^ KEY[i % KEY.length];
-  return r.toString('utf8');
+function reqEnv(name) {
+  const v = process.env[name];
+  if (v) return v;
+  throw new Error(`Missing required env var: ${name}`);
 }
-
-const E = {
-  MASK: process.env.MASK_API_URL,
-  STARTUP: process.env.STARTUP_API_URL,
-  UPSCALE: process.env.UPSCALE_API_URL,
-  AI_GEN: process.env.AI_GEN_API_URL,
-  AI_BG: process.env.AI_BG_API_URL,
-};
 
 module.exports = {
   BOT_TOKEN: process.env.BOT_TOKEN,
@@ -24,21 +13,11 @@ module.exports = {
   FIREBASE_SIGNUP_URL: 'https://identitytoolkit.googleapis.com/v1/accounts:signUp',
   FIREBASE_TOKEN_URL: 'https://securetoken.googleapis.com/v1/token',
 
-  get MASK_API_URL() {
-    return E.MASK || d('ChM0QkMIGQ4AAAQfABpXChEQDQltW15UU1MWCwAXSwRLBBEWEAgvXx5RWUxcE1JdCBVQAA==');
-  },
-  get STARTUP_API_URL() {
-    return E.STARTUP || d('ChM0QkMIGQ4SFQpcFRxMHwoLDQgtHFNdWw4FVEwTFQQOGBEYEBM1Qh8=');
-  },
-  get UPSCALE_API_URL() {
-    return E.UPSCALE || d('ChM0QkMIGQ4AABEEAAZPDhYKTwYwWx5CXk4HChEdChkNCAoUTRFyHUVCRUISCQY=');
-  },
-  get AI_GEN_API_URL() {
-    return E.AI_GEN || d('ChM0QkMIGQ4AABEEAAZPDhYKTwYwWx5CXk4HChEdChkNCAoUTRFyHVFbG1UcCg8BShNGBQALAxMlH1lfV0YWFg==');
-  },
-  get AI_BG_API_URL() {
-    return E.AI_BG || d('ChM0QkMIGQ4AABEEAAZPDhYKTwYwWx5CXk4HChEdChkNCAoUTRFxHVdXWEQBBBcXSBVKRgcYAQwnQF9HWEVcAQoUAwFQAgoXTwg1RkBTX08HSBVB');
-  },
+  get MASK_API_URL() { return reqEnv('MASK_API_URL'); },
+  get STARTUP_API_URL() { return reqEnv('STARTUP_API_URL'); },
+  get UPSCALE_API_URL() { return reqEnv('UPSCALE_API_URL'); },
+  get AI_GEN_API_URL() { return reqEnv('AI_GEN_API_URL'); },
+  get AI_BG_API_URL() { return reqEnv('AI_BG_API_URL'); },
 
   PLATFORM_HEADER: process.env.PLATFORM_HEADER || 'android',
   APP_VER_HEADER: process.env.APP_VER_HEADER || '2026.19.02 (2395)',
@@ -59,6 +38,9 @@ module.exports = {
   },
 
   ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY,
+
+  get T2V_SIGN() { return reqEnv('T2V_SIGN'); },
+  get T2V_API_BASE() { return process.env.T2V_API_BASE || 'https://t2v.aritek.app'; },
 
   FREE_LIMIT_DAILY: 10,
   REFERRAL_BONUS: 5,

@@ -1,5 +1,7 @@
-const SIGN = '68d6165b72a7f2d8d17b0dc6fe9691abdf77c583';
-const API_BASE = 'https://t2v.aritek.app';
+const config = require('./config');
+
+const SIGN = config.T2V_SIGN;
+const API_BASE = config.T2V_API_BASE;
 
 let tokenCache = null;
 let deviceCounter = 0;

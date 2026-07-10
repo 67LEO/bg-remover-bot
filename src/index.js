@@ -1200,22 +1200,6 @@ bot.on('document', async (ctx) => {
 
 const http = require('http');
 const PORT = process.env.PORT || 3000;
-const server = http.createServer(async (req, res) => {
-  if (req.url === '/health') {
-    try {
-      await db.getUserCount();
-      res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end('OK');
-    } catch {
-      res.writeHead(503, { 'Content-Type': 'text/plain' });
-      res.end('DB DOWN');
-    }
-    return;
-  }
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('OK');
-});
-server.timeout = 60000;
 
 function handleWithTimeout(botInstance, json) {
   return Promise.race([
@@ -1224,8 +1208,35 @@ function handleWithTimeout(botInstance, json) {
   ]);
 }
 
+const server = http.createServer((req, res) => {
+  if (req.url === '/webhook' || req.url === '/admin-webhook') {
+    const bufs = [];
+    req.on('data', chunk => bufs.push(chunk));
+    req.on('end', () => {
+      const body = Buffer.concat(bufs).toString();
+      let json;
+      try { json = JSON.parse(body); } catch {
+        res.writeHead(400);
+        res.end('Bad Request');
+        return;
+      }
+      res.writeHead(200);
+      res.end('OK');
+      if (req.url === '/admin-webhook' && adminBot) {
+        handleWithTimeout(adminBot, json).catch(e => console.error('Admin webhook error:', e.message));
+      } else if (req.url === '/webhook') {
+        handleWithTimeout(bot, json).catch(e => console.error('Main webhook error:', e.message));
+      }
+    });
+    return;
+  }
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Bot running');
+});
+server.timeout = 60000;
+
 server.listen(PORT, () => {
-  console.log(`Server on port ${PORT}`);
+  console.log(`Bot server on port ${PORT}`);
 });
 
 async function startBot() {
@@ -1252,36 +1263,10 @@ async function startBot() {
     console.log('Main webhook set:', mainWebhook);
 
     if (adminWebhook && adminBot) {
-      await adminBot.telegram.setWebhook(adminWebhook, { drop_pending_updates: true });
-      console.log('Admin webhook set:', adminWebhook);
+      adminBot.telegram.setWebhook(adminWebhook, { drop_pending_updates: true })
+        .then(() => console.log('Admin webhook set:', adminWebhook))
+        .catch(err => console.warn('Admin webhook setup failed (non-fatal):', err.message));
     }
-
-    server.removeAllListeners('request');
-    server.on('request', (req, res) => {
-      const bufs = [];
-      req.on('data', chunk => bufs.push(chunk));
-      req.on('end', () => {
-        const body = Buffer.concat(bufs).toString();
-        let json;
-        try { json = JSON.parse(body); } catch {
-          res.writeHead(400);
-          res.end('Bad Request');
-          return;
-        }
-        if (req.url === '/admin-webhook' && adminBot) {
-          res.writeHead(200);
-          res.end('OK');
-          handleWithTimeout(adminBot, json).catch(e => console.error('Admin webhook error:', e.message));
-        } else if (req.url === '/webhook') {
-          res.writeHead(200);
-          res.end('OK');
-          handleWithTimeout(bot, json).catch(e => console.error('Main webhook error:', e.message));
-        } else {
-          res.writeHead(200);
-          res.end('OK');
-        }
-      });
-    });
   } else {
     await bot.telegram.deleteWebhook({ drop_pending_updates: true });
     await bot.launch();

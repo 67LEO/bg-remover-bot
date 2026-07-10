@@ -1,9 +1,14 @@
 const { Pool } = require('pg');
+require('dotenv').config();
+
+const dbSsl = process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false };
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: dbSsl,
   max: 5,
+  connectionTimeoutMillis: 10000,
+  idleTimeoutMillis: 30000,
 });
 
 let dbReady = false;
@@ -406,6 +411,166 @@ async function getPremiumUsers() {
   return r.rows;
 }
 
-init();
+async function initWebTables() {
+  const client = await pool.connect();
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS web_users (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT,
+        display_name TEXT,
+        avatar_url TEXT,
+        auth_provider TEXT DEFAULT 'email',
+        google_id TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        last_login TIMESTAMPTZ
+      );
+      CREATE TABLE IF NOT EXISTS web_daily_usage (
+        user_id UUID REFERENCES web_users(id) ON DELETE CASCADE,
+        date DATE DEFAULT CURRENT_DATE,
+        count INTEGER DEFAULT 0,
+        PRIMARY KEY (user_id, date)
+      );
+    `);
+    await client.query(`
+      ALTER TABLE user_subscriptions ADD COLUMN IF NOT EXISTS web_user_id UUID REFERENCES web_users(id) ON DELETE CASCADE
+    `);
+    await client.query(`
+      ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS web_user_id UUID REFERENCES web_users(id) ON DELETE CASCADE
+    `);
+    await client.query(`
+      ALTER TABLE images ADD COLUMN IF NOT EXISTS web_user_id UUID REFERENCES web_users(id) ON DELETE CASCADE
+    `);
+    await client.query(`
+      ALTER TABLE payment_orders ALTER COLUMN chat_id DROP NOT NULL
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS anon_daily_usage (
+        anon_id TEXT,
+        date DATE DEFAULT CURRENT_DATE,
+        count INTEGER DEFAULT 0,
+        PRIMARY KEY (anon_id, date)
+      );
+    `);
+    console.log('Web tables ready');
+  } catch (err) {
+    console.error('Web tables init error:', err.message);
+  } finally {
+    client.release();
+  }
+}
 
-module.exports = { upsertUser, getUsage, incrementUsage, logImage, addReferral, getReferralCount, getUserStats, getAllUsers, getUserCount, getTotalStats, getDailyActiveCount, createTicket, getOpenTickets, getTicketById, replyTicket, closeTicket, activatePremiumByAdmin, getUserSubscriptions, createPaymentOrder, getPaymentOrderByRef, getPendingPayments, attachScreenshot, resetPaymentScreenshot, getUserPendingOrder, cancelPaymentOrder, revertPaymentOrder, confirmPaymentOrder, deactivateUser, getPremiumUsers };
+async function createWebUser(email, passwordHash, displayName, provider = 'email', googleId = null) {
+  const r = await query(
+    `INSERT INTO web_users (email, password_hash, display_name, auth_provider, google_id)
+     VALUES ($1, $2, $3, $4, $5) RETURNING id, email, display_name, auth_provider, created_at`,
+    [email, passwordHash, displayName, provider, googleId]
+  );
+  return r.rows[0];
+}
+
+async function findWebUserByEmail(email) {
+  const r = await query('SELECT * FROM web_users WHERE email = $1', [email]);
+  return r.rows[0] || null;
+}
+
+async function findWebUserById(id) {
+  const r = await query('SELECT * FROM web_users WHERE id = $1', [id]);
+  return r.rows[0] || null;
+}
+
+async function findWebUserByGoogleId(googleId) {
+  const r = await query('SELECT * FROM web_users WHERE google_id = $1', [googleId]);
+  return r.rows[0] || null;
+}
+
+async function updateWebUserLogin(id) {
+  await query('UPDATE web_users SET last_login = NOW() WHERE id = $1', [id]);
+}
+
+async function getWebUsage(userId) {
+  const today = new Date().toISOString().split('T')[0];
+  const r = await query('SELECT count FROM web_daily_usage WHERE user_id = $1 AND date = $2', [userId, today]);
+  return r.rows[0]?.count || 0;
+}
+
+async function incrementWebUsage(userId) {
+  const today = new Date().toISOString().split('T')[0];
+  await query(
+    `INSERT INTO web_daily_usage (user_id, date, count) VALUES ($1, $2, 1)
+     ON CONFLICT (user_id, date) DO UPDATE SET count = web_daily_usage.count + 1`,
+    [userId, today]
+  );
+}
+
+async function getWebUserStats(userId) {
+  const user = await findWebUserById(userId);
+  if (!user) return null;
+
+  const webSubs = await query(
+    `SELECT * FROM user_subscriptions
+     WHERE web_user_id = $1 AND active = true
+       AND (expires_at IS NULL OR expires_at > NOW())
+     ORDER BY expires_at DESC NULLS LAST LIMIT 1`,
+    [userId]
+  );
+  const isPremium = webSubs.rows.length > 0;
+  const dailyUsed = await getWebUsage(userId);
+  const freeLimit = require('./config').FREE_LIMIT_DAILY;
+  return {
+    totalUses: 0,
+    dailyUsed,
+    dailyRemaining: isPremium ? Infinity : Math.max(0, freeLimit - dailyUsed),
+    isPremium,
+    premiumUntil: webSubs.rows[0]?.expires_at || null,
+  };
+}
+
+async function getAnonUsage(anonId) {
+  const today = new Date().toISOString().split('T')[0];
+  const r = await query('SELECT count FROM anon_daily_usage WHERE anon_id = $1 AND date = $2', [anonId, today]);
+  return r.rows[0]?.count || 0;
+}
+
+async function incrementAnonUsage(anonId) {
+  const today = new Date().toISOString().split('T')[0];
+  await query(
+    `INSERT INTO anon_daily_usage (anon_id, date, count) VALUES ($1, $2, 1)
+     ON CONFLICT (anon_id, date) DO UPDATE SET count = anon_daily_usage.count + 1`,
+    [anonId, today]
+  );
+}
+
+async function cleanupOldUsage() {
+  try {
+    const cutoff = new Date(Date.now() - 90 * 86400000).toISOString().split('T')[0];
+    const r1 = await query('DELETE FROM daily_usage WHERE date < $1', [cutoff]);
+    const r2 = await query('DELETE FROM web_daily_usage WHERE date < $1', [cutoff]);
+    const r3 = await query('DELETE FROM anon_daily_usage WHERE date < $1', [cutoff]);
+    if (r1.rowCount > 0 || r2.rowCount > 0 || r3.rowCount > 0) {
+      console.log(`Cleanup: removed ${r1.rowCount + r2.rowCount + r3.rowCount} old usage rows`);
+    }
+  } catch {}
+}
+
+init();
+initWebTables();
+cleanupOldUsage();
+setInterval(cleanupOldUsage, 86400000);
+
+module.exports = {
+  pool, query,
+  upsertUser, getUsage, incrementUsage, logImage, addReferral,
+  getReferralCount, getUserStats, getAllUsers, getUserCount,
+  getTotalStats, getDailyActiveCount, createTicket, getOpenTickets,
+  getTicketById, replyTicket, closeTicket, activatePremiumByAdmin,
+  getUserSubscriptions, createPaymentOrder, getPaymentOrderByRef,
+  getPendingPayments, attachScreenshot, resetPaymentScreenshot,
+  getUserPendingOrder, cancelPaymentOrder, revertPaymentOrder,
+  confirmPaymentOrder, deactivateUser, getPremiumUsers,
+  createWebUser, findWebUserByEmail, findWebUserById,
+  findWebUserByGoogleId, updateWebUserLogin, getWebUsage,
+  incrementWebUsage, getWebUserStats,
+  getAnonUsage, incrementAnonUsage,
+};

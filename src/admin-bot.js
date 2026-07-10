@@ -10,6 +10,10 @@ if (!config.ADMIN_BOT_TOKEN) {
 const bot = new Telegraf(config.ADMIN_BOT_TOKEN);
 const mainBot = new Telegraf(config.BOT_TOKEN);
 
+// Polyfill getMe to avoid API call on every handleUpdate (Render free tier network issue)
+const adminBotId = parseInt(config.ADMIN_BOT_TOKEN.split(':')[0]);
+bot.telegram.getMe = async () => ({ id: adminBotId, is_bot: true, first_name: 'Admin', username: 'Ai_bg_adminBot' });
+
 const ADMIN_ID = config.ADMIN_CHAT_ID;
 let lastError = null;
 
