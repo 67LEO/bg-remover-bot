@@ -134,7 +134,7 @@ bot.command('share', async (ctx) => {
 });
 
 bot.command('upscale', async (ctx) => {
-  userMode.set(ctx.chat.id, 'upscale');
+  userMode.set(ctx.chat.id, { mode: 'upscale', _ts: Date.now() });
   await ctx.reply('🔍 Send me a photo, I\'ll upscale it 4x HD!');
 });
 
@@ -724,16 +724,31 @@ async function handleBuyPlan(ctx, plan) {
 
 bot.command('cancel', async (ctx) => {
   const chatId = ctx.chat.id;
+  const displayName = ctx.chat.first_name || ctx.chat.username || `User ${chatId}`;
+
   if (pendingPayment.has(chatId)) {
     const order = pendingPayment.get(chatId);
     await db.cancelPaymentOrder(order.orderRef);
     pendingPayment.delete(chatId);
     await ctx.reply('✅ Payment cancelled. Type /premium anytime to buy again.');
-
-    const displayName = ctx.chat.first_name || ctx.chat.username || `User ${chatId}`;
     sendNotification(`❌ *Order Cancelled*\n\n👤 ${displayName}\n🔖 ${order.orderRef}\n💰 ${order.plan}`);
     return;
   }
+
+  const dbOrder = await db.getUserPendingOrder(chatId);
+  if (dbOrder) {
+    await db.cancelPaymentOrder(dbOrder.order_ref);
+    await ctx.reply('✅ Payment cancelled. Type /premium anytime to buy again.');
+    sendNotification(`❌ *Order Cancelled*\n\n👤 ${displayName}\n🔖 ${dbOrder.order_ref}\n💰 ${dbOrder.plan}`);
+    return;
+  }
+
+  if (userMode.has(chatId)) {
+    userMode.delete(chatId);
+    await ctx.reply('✅ Upscale mode cancelled.');
+    return;
+  }
+
   if (voiceSession.has(chatId)) {
     voiceSession.delete(chatId);
     await ctx.reply('✅ Voice generation cancelled. Use /voice to start again.');
@@ -770,15 +785,22 @@ const AI_BG_TEMPLATES = {
 };
 
 const SESSION_TTL = 60 * 60 * 1000;
+const USERMODE_TTL = 30 * 60 * 1000;
 setInterval(() => {
   const now = Date.now();
-  for (const [k, v] of pendingPayment) { if (now - (v._ts || 0) > SESSION_TTL) pendingPayment.delete(k); }
+  for (const [k, v] of pendingPayment) {
+    if (now - (v._ts || 0) > SESSION_TTL) {
+      db.cancelPaymentOrder(v.orderRef).catch(() => {});
+      pendingPayment.delete(k);
+    }
+  }
   for (const [k, v] of voiceSession) { if (now - (v._ts || 0) > SESSION_TTL) voiceSession.delete(k); }
   for (const [k, v] of imagineSession) { if (now - (v._ts || 0) > SESSION_TTL) imagineSession.delete(k); }
   for (const [k, v] of lastGenImage) { if (now - (v.timestamp || 0) > SESSION_TTL) lastGenImage.delete(k); }
   for (const [k, v] of aiBgSession) { if (now - (v._ts || 0) > SESSION_TTL) aiBgSession.delete(k); }
   for (const [k, v] of recentImage) { if (now - (v._ts || 0) > SESSION_TTL) recentImage.delete(k); }
   for (const [k, v] of rateLimitMap) { if (now - v.ts > 60000) rateLimitMap.delete(k); }
+  for (const [k, v] of userMode) { if (now - (v._ts || 0) > USERMODE_TTL) userMode.delete(k); }
 }, 60000);
 
 const premiumCache = new Set();
@@ -814,7 +836,10 @@ function checkRateLimit(chatId) {
 
 function sendNotification(msg) {
   if (adminBot && config.ADMIN_CHAT_ID) {
-    adminBot.telegram.sendMessage(config.ADMIN_CHAT_ID, msg, { parse_mode: 'Markdown' }).catch(() => {});
+    adminBot.telegram.sendMessage(config.ADMIN_CHAT_ID, msg, { parse_mode: 'Markdown' })
+      .catch(err => console.error('Admin notification failed:', err.message));
+  } else {
+    console.warn('sendNotification skipped — adminBot:', !!adminBot, 'ADMIN_CHAT_ID:', config.ADMIN_CHAT_ID);
   }
 }
 
@@ -842,12 +867,16 @@ async function handlePaymentScreenshot(ctx, chatId, name, username, order, fileI
       const res = await fetch(fileLink.href);
       if (res.ok) {
         const buf = Buffer.from(await res.arrayBuffer());
-        adminBot.telegram.sendPhoto(config.ADMIN_CHAT_ID, { source: buf }, {
+        await adminBot.telegram.sendPhoto(config.ADMIN_CHAT_ID, { source: buf }, {
           caption: `📸 *New Payment Screenshot*\n\n👤 ${displayName}\n🔖 Ref: ${order.orderRef}\n💰 ${order.plan}`,
           parse_mode: 'Markdown',
-        }).catch(() => {});
+        });
+      } else {
+        console.error('Admin photo forward: fetch failed', res.status);
       }
-    } catch {}
+    } catch (err) {
+      console.error('Admin photo forward failed:', err.message);
+    }
   }
 }
 
@@ -881,18 +910,6 @@ bot.on('my_chat_member', async (ctx) => {
 
 bot.on('text', async (ctx) => {
   const chatId = ctx.chat.id;
-
-  if (pendingPayment.has(chatId)) {
-    return await ctx.replyWithMarkdown(
-      '📸 *INVALID INPUT — Send a PHOTO, not text*\n\n' +
-      '━━━━━━━━━━━━━━━━━━━\n' +
-      '⚠️ You have a *pending payment*.\n\n' +
-      '✅ Already paid?: Send the *payment screenshot* photo here\n' +
-      '❌ Not yet paid?: Check the QR code above and pay first\n\n' +
-      'Cancel this order? → /cancel\n' +
-      '━━━━━━━━━━━━━━━━━━━'
-    );
-  }
 
   const aiBg = aiBgSession.get(chatId);
   if (aiBg?.step === 'prompt') {
@@ -946,6 +963,18 @@ bot.on('text', async (ctx) => {
       await ctx.reply('❌ Something went wrong. Please try again later.');
     }
     return;
+  }
+
+  if (pendingPayment.has(chatId)) {
+    return await ctx.replyWithMarkdown(
+      '📸 *INVALID INPUT — Send a PHOTO, not text*\n\n' +
+      '━━━━━━━━━━━━━━━━━━━\n' +
+      '⚠️ You have a *pending payment*.\n\n' +
+      '✅ Already paid?: Send the *payment screenshot* photo here\n' +
+      '❌ Not yet paid?: Check the QR code above and pay first\n\n' +
+      'Cancel this order? → /cancel\n' +
+      '━━━━━━━━━━━━━━━━━━━'
+    );
   }
 });
 
@@ -1159,7 +1188,8 @@ bot.on('photo', async (ctx) => {
   }
 
   const caption = ctx.message.caption || '';
-  const isUpscaleCmd = userMode.get(chatId) === 'upscale';
+  const userModeEntry = userMode.get(chatId);
+  const isUpscaleCmd = userModeEntry?.mode === 'upscale';
   const isUpscaleCaption = /^(\/upscale|upscale)/i.test(caption.trim());
   const doUpscale = isUpscaleCmd || isUpscaleCaption;
   if (isUpscaleCmd) userMode.delete(chatId);
@@ -1240,6 +1270,9 @@ server.listen(PORT, () => {
 });
 
 async function startBot() {
+  console.log('Admin bot:', adminBot ? 'enabled' : 'DISABLED (ADMIN_BOT_TOKEN not set)');
+  console.log('ADMIN_CHAT_ID:', config.ADMIN_CHAT_ID || 'NOT SET');
+
   const baseUrl = process.env.RENDER_EXTERNAL_URL;
   const mainWebhook = baseUrl ? baseUrl + '/webhook' : null;
   const adminWebhook = baseUrl && config.ADMIN_BOT_TOKEN ? baseUrl + '/admin-webhook' : null;

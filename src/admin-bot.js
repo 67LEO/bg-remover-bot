@@ -463,7 +463,7 @@ bot.telegram.setMyCommands([
   { command: 'broadcast', description: '📢 Broadcast to all users' },
   { command: 'admin', description: '📊 Bot analytics' },
   { command: 'debug', description: '🔧 System status' },
-]).catch(() => {});
+]).catch(err => console.error('Admin bot setMyCommands failed:', err.message));
 
 module.exports = bot;
 }
