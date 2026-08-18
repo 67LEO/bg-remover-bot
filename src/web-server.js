@@ -65,7 +65,7 @@ app.get('/{*path}', (req, res) => {
   });
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.WEB_PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Web server on port ${PORT}`);
 });
