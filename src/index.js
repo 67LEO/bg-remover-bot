@@ -6,6 +6,7 @@ const db = require('./db');
 const adminBot = require('./admin-bot');
 const { getVoices, generateSpeech, SUPPORTED_LANGUAGES } = require('./elevenlabs');
 const { generateVideo } = require('./video');
+const { initPool } = require('./firebase');
 const fs = require('fs');
 
 const __origFetch = globalThis.fetch;
@@ -1270,6 +1271,7 @@ server.listen(PORT, () => {
 });
 
 async function startBot() {
+  await initPool();
   console.log('Admin bot:', adminBot ? 'enabled' : 'DISABLED (ADMIN_BOT_TOKEN not set)');
   console.log('ADMIN_CHAT_ID:', config.ADMIN_CHAT_ID || 'NOT SET');
 
