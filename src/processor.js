@@ -2,7 +2,6 @@ const config = require('./config');
 const { ensureAuth, rotateToken, appStartup } = require('./firebase');
 const sharp = require('sharp');
 const crypto = require('crypto');
-
 class ContentViolationError extends Error {
   constructor(msg) { super(msg); this.name = 'ContentViolationError'; }
 }
@@ -24,6 +23,8 @@ class Semaphore {
   }
 }
 
+const MAX_ROTATIONS = 6;
+
 const apiSem = new Semaphore(5);
 
 async function withRetry(fn) {
@@ -34,14 +35,30 @@ async function withRetry(fn) {
   } catch (err) {
     if (err instanceof ContentViolationError) throw err;
     const msg = err.message || '';
-    const retryable = msg.includes('failed: 401') || msg.includes('failed: 403') ||
-                      msg.includes('failed: 429') || msg.includes('failed: 5');
+    const isEntitlement = msg.includes('failed: 429');
+    const retryable = isEntitlement || msg.includes('failed: 401') ||
+                      msg.includes('failed: 403') || msg.includes('failed: 5');
     if (!retryable) throw err;
-    console.warn(`[api] Token rotation, retrying: ${msg.slice(0, 100)}`);
-    await rotateToken();
-    await appStartup();
-    const freshToken = await ensureAuth();
-    return await fn(freshToken);
+
+    const attempts = isEntitlement ? MAX_ROTATIONS : 1;
+    let lastErr = err;
+    for (let i = 0; i < attempts; i++) {
+      console.warn(`[api] Token rotation (${i + 1}/${attempts})${isEntitlement ? ' [entitlement]' : ''}: ${msg.slice(0, 100)}`);
+      await rotateToken(isEntitlement);
+      await appStartup();
+      const freshToken = await ensureAuth();
+      try {
+        return await fn(freshToken);
+      } catch (e) {
+        if (e instanceof ContentViolationError) throw e;
+        lastErr = e;
+        const m = e.message || '';
+        // keep rotating on entitlement 429; stop early on anything else
+        if (isEntitlement && m.includes('failed: 429')) continue;
+        break;
+      }
+    }
+    throw lastErr;
   }
 }
 

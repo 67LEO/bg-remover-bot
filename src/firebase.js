@@ -1,6 +1,8 @@
 const config = require('./config');
 
-const POOL_SIZE = 3;
+const POOL_SIZE = parseInt(process.env.FIREBASE_POOL_SIZE, 10) || 8;
+const COOLDOWN_MS = (parseInt(process.env.FIREBASE_COOLDOWN_MS, 10) || 60) * 60 * 1000;
+
 let tokenPool = [];
 let currentIdx = 0;
 let currentEntry = null;
@@ -22,14 +24,19 @@ async function createAccount() {
     refreshToken: data.refreshToken,
     expiry: Date.now() + (parseInt(data.expiresIn) - 60) * 1000,
     bad: false,
+    cooldownUntil: 0,
   };
+}
+
+function isUsable(entry) {
+  return entry && !entry.bad && Date.now() < entry.expiry && Date.now() >= (entry.cooldownUntil || 0);
 }
 
 function getNextFromPool() {
   for (let i = 0; i < tokenPool.length; i++) {
     const idx = (currentIdx + i) % tokenPool.length;
     const entry = tokenPool[idx];
-    if (entry && !entry.bad && Date.now() < entry.expiry) {
+    if (isUsable(entry)) {
       currentIdx = (idx + 1) % tokenPool.length;
       return entry;
     }
@@ -38,7 +45,7 @@ function getNextFromPool() {
 }
 
 async function ensureAuth() {
-  if (currentEntry && !currentEntry.bad && Date.now() < currentEntry.expiry) {
+  if (isUsable(currentEntry)) {
     return currentEntry;
   }
   const entry = getNextFromPool();
@@ -52,8 +59,17 @@ async function ensureAuth() {
   return currentEntry;
 }
 
-async function rotateToken() {
-  if (currentEntry) currentEntry.bad = true;
+// Rotate to the next usable account. If `exhausted` is true, the current
+// account hit an entitlement rate-limit and goes on cool-down (usable again
+// after COOLDOWN_MS) instead of being discarded permanently.
+async function rotateToken(exhausted = false) {
+  if (currentEntry) {
+    if (exhausted) {
+      currentEntry.cooldownUntil = Date.now() + COOLDOWN_MS;
+    } else {
+      currentEntry.bad = true;
+    }
+  }
   const entry = getNextFromPool();
   if (entry) {
     currentEntry = entry;
@@ -67,8 +83,31 @@ async function rotateToken() {
   return currentEntry;
 }
 
+// Force-create a brand new account (bypassing the pool) to burst past a
+// per-user entitlement limit. The caller is responsible for calling
+// markUsedFresh() so it gets recycled into the pool instead of leaking.
+async function fetchFreshAccount() {
+  const entry = await createAccount();
+  tokenPool.push(entry);
+  currentIdx = tokenPool.length;
+  currentEntry = entry;
+  console.log(`[auth] Fresh burst account → ${entry.localId.slice(0, 8)}...`);
+  return { ...entry };
+}
+
+function markExhausted(entry) {
+  if (!entry) return;
+  const poolEntry = tokenPool.find(t => t.localId === entry.localId);
+  if (poolEntry) poolEntry.cooldownUntil = Date.now() + COOLDOWN_MS;
+}
+
+function clearCooldowns() {
+  for (const t of tokenPool) t.cooldownUntil = 0;
+  console.log('[auth] Cleared all cool-downs');
+}
+
 async function replenishPool() {
-  const good = tokenPool.filter(t => !t.bad && Date.now() < t.expiry);
+  const good = tokenPool.filter(t => isUsable(t));
   const needed = POOL_SIZE - good.length;
   if (needed <= 0) return;
   tokenPool = good;
@@ -79,7 +118,8 @@ async function replenishPool() {
   for (const r of results) {
     if (r.status === 'fulfilled') tokenPool.push(r.value);
   }
-  console.log(`[auth] Pool ready: ${tokenPool.length} tokens`);
+  const usable = tokenPool.filter(isUsable).length;
+  console.log(`[auth] Pool ready: ${tokenPool.length} tokens (${usable} usable)`);
 }
 
 async function appStartup() {
@@ -95,9 +135,17 @@ async function appStartup() {
 }
 
 async function initPool() {
-  console.log('[auth] Initializing token pool...');
+  console.log(`[auth] Initializing token pool (size=${POOL_SIZE})...`);
   await replenishPool();
   setInterval(replenishPool, 10 * 60 * 1000);
 }
 
-module.exports = { ensureAuth, rotateToken, appStartup, initPool };
+module.exports = {
+  ensureAuth,
+  rotateToken,
+  appStartup,
+  initPool,
+  fetchFreshAccount,
+  markExhausted,
+  clearCooldowns,
+};

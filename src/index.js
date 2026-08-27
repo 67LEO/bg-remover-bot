@@ -557,7 +557,11 @@ async function processAiBackground(ctx, chatId, prompt) {
     await db.logImage(chatId, cached.imageBuffer.length, resultBuffer.length, 'ai_bg');
   } catch (err) {
     console.error('AI BG error:', err.message);
-    await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Please try again later.');
+    if (/failed: 429|entitlement|rate.limit/i.test(err.message || '')) {
+      await ctx.telegram.sendMessage(chatId, '⚡ AI background credits are temporarily exhausted on our side. Please try again in a few minutes — background removal & upscale still work!');
+    } else {
+      await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Please try again later.');
+    }
   } finally {
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
   }
@@ -802,6 +806,7 @@ setInterval(() => {
   for (const [k, v] of recentImage) { if (now - (v._ts || 0) > SESSION_TTL) recentImage.delete(k); }
   for (const [k, v] of rateLimitMap) { if (now - v.ts > 60000) rateLimitMap.delete(k); }
   for (const [k, v] of userMode) { if (now - (v._ts || 0) > USERMODE_TTL) userMode.delete(k); }
+  for (const [k, v] of processedPhotos) { if (now - v > 60000) processedPhotos.delete(k); }
 }, 60000);
 
 const premiumCache = new Set();
@@ -1068,6 +1073,8 @@ async function generateImageAsync(ctx, chatId, text, userStats, dailyUsed, msg, 
     console.error('Message:', err.message);
     if (err instanceof ContentViolationError) {
       await ctx.telegram.sendMessage(chatId, '🚫 Your prompt was rejected by the AI content filter. Please try a different, family-friendly description.');
+    } else if (/failed: 429|entitlement|rate.limit/i.test(err.message || '')) {
+      await ctx.telegram.sendMessage(chatId, '⚡ AI image credits are temporarily exhausted on our side. Please try again in a few minutes — background removal & upscale still work!');
     } else {
       await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Please try again later.');
     }
@@ -1163,8 +1170,15 @@ bot.on('inline_query', async (ctx) => {
   }
 });
 
-bot.on('photo', async (ctx) => {
+const processedPhotos = new Map();
+
+async function handlePhoto(ctx) {
   const chatId = ctx.chat.id;
+
+  const msgKey = ctx.message?.message_id;
+  if (msgKey && processedPhotos.has(msgKey)) return;
+  if (msgKey) processedPhotos.set(msgKey, Date.now());
+
   const { first_name: name, username } = ctx.chat;
   await db.upsertUser(chatId, name, username);
 
@@ -1212,9 +1226,11 @@ bot.on('photo', async (ctx) => {
   const processingMsg = await ctx.reply('⏳ Processing...');
 
   // Fire-and-forget: process in background so handleUpdate resolves immediately
-  processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, processingMsg)
+  await processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, processingMsg)
     .catch(err => console.error('Background process error:', err.message));
-});
+}
+
+bot.on('photo', handlePhoto);
 
 bot.on('document', async (ctx) => {
   const doc = ctx.message.document;
@@ -1224,7 +1240,7 @@ bot.on('document', async (ctx) => {
   const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
   if (doc.mime_type && validTypes.includes(doc.mime_type)) {
     ctx.message.photo = [{ file_id: doc.file_id, file_size: doc.file_size }];
-    return bot.emit('photo', ctx);
+    return handlePhoto(ctx);
   }
   await ctx.reply('Please send a photo (JPG/PNG/WebP), not a file.');
 });
