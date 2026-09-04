@@ -659,7 +659,7 @@ bot.command('profile', async (ctx) => {
   if (isNaN(targetId)) return ctx.reply('❌ Invalid chat ID.');
 
   const msg = await profileText(targetId);
-  await ctx.replyWithMarkdown(msg, { reply_markup: { inline_keyboard: profileNav(targetId) } });
+  await ctx.replyWithMarkdown(msg, { reply_markup: profileNav(targetId).reply_markup });
 });
 
 async function profileText(chatId) {
