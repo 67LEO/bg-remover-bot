@@ -678,19 +678,19 @@ async function profileText(chatId) {
 
   if (u.orders.length) {
     msg += `\n🧾 *Recent Orders:*\n`;
-    u.orders.forEach(o => msg += `» ${o.order_ref} — ${o.plan} ₹${o.amount} — ${o.status}\n`);
+    u.orders.forEach(o => msg += `» ${escMd(o.order_ref)} — ${escMd(o.plan)} ₹${o.amount} — ${escMd(o.status)}\n`);
   }
   if (u.subs.length) {
     msg += `\n📆 *Subscriptions:*\n`;
-    u.subs.forEach(s => msg += `» ${s.plan} (${s.activated_by}) — ${s.expires_at ? new Date(s.expires_at).toDateString() : 'lifetime'} — ${s.active ? 'active' : 'inactive'}\n`);
+    u.subs.forEach(s => msg += `» ${escMd(s.plan)} (${escMd(s.activated_by)}) — ${s.expires_at ? new Date(s.expires_at).toDateString() : 'lifetime'} — ${s.active ? 'active' : 'inactive'}\n`);
   }
   if (u.tickets.length) {
     msg += `\n🎫 *Tickets:*\n`;
-    u.tickets.forEach(t => msg += `» #${t.id} — ${t.status}\n`);
+    u.tickets.forEach(t => msg += `» #${t.id} — ${escMd(t.status)}\n`);
   }
   if (u.images.length) {
     msg += `\n🖼️ *Recent activity:*\n`;
-    u.images.forEach(i => msg += `» ${i.type} — ${new Date(i.created_at).toDateString()}\n`);
+    u.images.forEach(i => msg += `» ${escMd(i.type)} — ${new Date(i.created_at).toDateString()}\n`);
   }
   return msg;
 }
