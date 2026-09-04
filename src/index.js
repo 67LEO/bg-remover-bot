@@ -42,6 +42,23 @@ function parseReferral(ctx) {
 bot.use(async (ctx, next) => {
   if (ctx.message && ctx.chat) {
     const chatId = ctx.chat.id;
+
+    // Banned user check — allow only /start & /support so they can appeal
+    const txt = ctx.message.text || '';
+    const isAllowedCmd = /^\/start/.test(txt) || /^\/support/.test(txt);
+    if (!isAllowedCmd && config.ADMIN_CHAT_ID && String(chatId) !== String(config.ADMIN_CHAT_ID)) {
+      if (banCheckCache.has(chatId)) {
+        return ctx.reply('⛔ Your access has been blocked. Contact support if you think this is a mistake.');
+      }
+      try {
+        const banned = await db.isBanned(chatId);
+        if (banned) {
+          banCheckCache.add(chatId);
+          return ctx.reply('⛔ Your access has been blocked. Contact support if you think this is a mistake.');
+        }
+      } catch {}
+    }
+
     if (premiumCache.has(chatId)) return next();
 
     const result = checkRateLimit(chatId);
@@ -284,11 +301,25 @@ bot.command('support', async (ctx) => {
   await db.upsertUser(chatId, name, username);
 
   try {
-    const ticketId = await db.createTicket(chatId, text);
-    await ctx.reply(`✅ *Ticket #${ticketId} submitted!*\n\nOur team will review your query and get back to you soon.`, { parse_mode: 'Markdown' });
+    const openTicket = await db.getUserOpenTicket(chatId);
+    let ticketId;
+    if (openTicket) {
+      await db.appendToTicket(openTicket.id, text);
+      ticketId = openTicket.id;
+      await ctx.reply(
+        `✅ *Message added to Ticket #${ticketId}!*\n\nOur team will continue your existing conversation and get back to you soon.`,
+        { parse_mode: 'Markdown' }
+      );
+    } else {
+      ticketId = await db.createTicket(chatId, text);
+      await ctx.reply(
+        `✅ *Ticket #${ticketId} submitted!*\n\nOur team will review your query and get back to you soon.`,
+        { parse_mode: 'Markdown' }
+      );
+    }
 
     const displayName = name || username || `User ${chatId}`;
-    sendNotification(`📩 *New Support Ticket #${ticketId}*\n\n👤 ${displayName}\n💬 \`${text.substring(0, 200)}\``);
+    sendNotification(`📩 *Support Message — Ticket #${ticketId}*\n\n👤 ${displayName}\n💬 \`${text.substring(0, 200)}\``);
   } catch (err) {
     await ctx.reply('❌ Error submitting ticket. Please try again later.');
   }
@@ -810,6 +841,7 @@ setInterval(() => {
 }, 60000);
 
 const premiumCache = new Set();
+const banCheckCache = new Set();
 
 async function refreshPremiumCache() {
   try {
@@ -823,6 +855,7 @@ async function refreshPremiumCache() {
 }
 refreshPremiumCache();
 setInterval(refreshPremiumCache, 300000);
+setInterval(() => banCheckCache.clear(), 300000);
 
 const RATE_LIMIT = 5;
 const RATE_WINDOW = 60000;

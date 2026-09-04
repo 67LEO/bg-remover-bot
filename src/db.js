@@ -41,8 +41,12 @@ async function init() {
           joined_at TIMESTAMPTZ DEFAULT NOW(),
           total_uses INTEGER DEFAULT 0,
           is_premium BOOLEAN DEFAULT FALSE,
-          premium_until TIMESTAMPTZ
+          premium_until TIMESTAMPTZ,
+          banned BOOLEAN DEFAULT FALSE,
+          banned_reason TEXT
         );
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS banned BOOLEAN DEFAULT FALSE;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_reason TEXT;
         CREATE TABLE IF NOT EXISTS daily_usage (
           chat_id BIGINT,
           date DATE,
@@ -71,8 +75,10 @@ async function init() {
           status TEXT DEFAULT 'open',
           admin_reply TEXT,
           created_at TIMESTAMPTZ DEFAULT NOW(),
-          replied_at TIMESTAMPTZ
+          replied_at TIMESTAMPTZ,
+          user_replied BOOLEAN DEFAULT FALSE
         );
+        ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS user_replied BOOLEAN DEFAULT FALSE;
         CREATE TABLE IF NOT EXISTS user_subscriptions (
           id SERIAL PRIMARY KEY,
           chat_id BIGINT NOT NULL,
@@ -188,6 +194,21 @@ async function getAllUsers() {
   return r.rows;
 }
 
+async function searchUsers(query) {
+  const q = `%${query}%`;
+  const r = await query(
+    `SELECT chat_id, first_name, username, total_uses, is_premium, banned AS is_banned, joined_at
+     FROM users
+     WHERE chat_id::TEXT = $1
+        OR LOWER(username) LIKE LOWER($2)
+        OR LOWER(first_name) LIKE LOWER($2)
+     ORDER BY total_uses DESC
+     LIMIT 20`,
+    [query, q]
+  );
+  return r.rows;
+}
+
 async function getTotalStats() {
   const users = await query('SELECT COUNT(*) as count FROM users');
   const images = await query('SELECT COUNT(*) as count FROM images');
@@ -222,8 +243,41 @@ async function getOpenTickets() {
     `SELECT t.*, u.first_name, u.username
      FROM support_tickets t
      LEFT JOIN users u ON u.chat_id = t.chat_id
-     WHERE t.status = 'open'
-     ORDER BY t.id ASC`
+     WHERE t.status IN ('open', 'replied')
+     ORDER BY
+       (t.status = 'replied' AND t.user_replied = true) DESC,
+       CASE WHEN t.status = 'open' THEN 0 ELSE 1 END,
+       t.id ASC`
+  );
+  return r.rows;
+}
+
+async function getUserOpenTicket(chatId) {
+  const r = await query(
+    `SELECT * FROM support_tickets
+     WHERE chat_id = $1 AND status IN ('open', 'replied')
+     ORDER BY id DESC LIMIT 1`,
+    [chatId]
+  );
+  return r.rows[0] || null;
+}
+
+async function appendToTicket(id, message) {
+  await query(
+    `UPDATE support_tickets
+     SET message = message || E'\\n\\n[New message] ' || $1,
+         user_replied = true,
+         status = 'open',
+         replied_at = NULL
+     WHERE id = $2`,
+    [message, id]
+  );
+}
+
+async function getUserTickets(chatId) {
+  const r = await query(
+    'SELECT id, message, status, admin_reply, created_at FROM support_tickets WHERE chat_id = $1 ORDER BY id DESC LIMIT 10',
+    [chatId]
   );
   return r.rows;
 }
@@ -235,7 +289,7 @@ async function getTicketById(id) {
 
 async function replyTicket(id, adminReply) {
   await query(
-    "UPDATE support_tickets SET status = 'replied', admin_reply = $1, replied_at = NOW() WHERE id = $2",
+    "UPDATE support_tickets SET status = 'replied', admin_reply = $1, replied_at = NOW(), user_replied = false WHERE id = $2",
     [adminReply, id]
   );
 }
@@ -313,6 +367,39 @@ async function getPendingPayments() {
      ORDER BY p.id ASC`
   );
   return r.rows;
+}
+
+async function getOrders(filter) {
+  const allowed = ['pending', 'confirmed', 'cancelled'];
+  const status = allowed.includes(filter) ? filter : null;
+  let sql, params;
+  if (status === 'cancelled') {
+    sql = `SELECT p.*, u.first_name, u.username FROM payment_orders p
+           LEFT JOIN users u ON u.chat_id = p.chat_id
+           WHERE p.status = 'cancelled' ORDER BY p.id DESC LIMIT 100`;
+    params = [];
+  } else if (status === 'confirmed' || status === 'pending') {
+    sql = `SELECT p.*, u.first_name, u.username FROM payment_orders p
+           LEFT JOIN users u ON u.chat_id = p.chat_id
+           WHERE p.status = $1 ORDER BY p.id DESC LIMIT 100`;
+    params = [status];
+  } else {
+    // all
+    sql = `SELECT p.*, u.first_name, u.username FROM payment_orders p
+           LEFT JOIN users u ON u.chat_id = p.chat_id
+           ORDER BY p.id DESC LIMIT 100`;
+    params = [];
+  }
+  const r = await query(sql, params);
+  return r.rows;
+}
+
+async function deletePaymentOrder(orderRef) {
+  const r = await query(
+    'DELETE FROM payment_orders WHERE order_ref = $1 RETURNING id',
+    [orderRef]
+  );
+  return r.rows.length > 0;
 }
 
 async function attachScreenshot(orderRef, fileId) {
@@ -400,15 +487,130 @@ async function getUserCount() {
 
 async function getPremiumUsers() {
   const r = await query(
-    `SELECT u.chat_id, u.first_name, u.username, u.premium_until,
+    `SELECT DISTINCT ON (u.chat_id) u.chat_id, u.first_name, u.username, u.premium_until,
             s.plan, s.activated_by, s.ticket_id, p.order_ref, p.screenshot_file_id
      FROM users u
-     LEFT JOIN user_subscriptions s ON s.chat_id = u.chat_id AND s.active = true
-     LEFT JOIN payment_orders p ON p.chat_id = u.chat_id AND p.status = 'confirmed'
+     LEFT JOIN LATERAL (
+       SELECT plan, activated_by, ticket_id FROM user_subscriptions
+       WHERE chat_id = u.chat_id AND active = true
+       ORDER BY expires_at DESC NULLS LAST LIMIT 1
+     ) s ON true
+     LEFT JOIN LATERAL (
+       SELECT order_ref, screenshot_file_id FROM payment_orders
+       WHERE chat_id = u.chat_id AND status = 'confirmed'
+       ORDER BY confirmed_at DESC LIMIT 1
+     ) p ON true
      WHERE u.is_premium = true
-     ORDER BY u.premium_until DESC NULLS LAST`
+     ORDER BY u.chat_id`
   );
   return r.rows;
+}
+
+async function banUser(chatId, reason = '') {
+  await query(
+    'UPDATE users SET banned = true, banned_reason = $2 WHERE chat_id = $1',
+    [chatId, reason]
+  );
+}
+
+async function unbanUser(chatId) {
+  await query(
+    'UPDATE users SET banned = false, banned_reason = NULL WHERE chat_id = $1',
+    [chatId]
+  );
+}
+
+async function getBannedUsers() {
+  const r = await query(
+    `SELECT chat_id, first_name, username, banned_reason, total_uses
+     FROM users WHERE banned = true ORDER BY total_uses DESC LIMIT 50`
+  );
+  return r.rows;
+}
+
+async function isBanned(chatId) {
+  const r = await query('SELECT banned FROM users WHERE chat_id = $1', [chatId]);
+  return !!(r.rows[0]?.banned);
+}
+
+async function getExpiringPremium(daysAhead) {
+  const cutoff = new Date(Date.now() + daysAhead * 86400000);
+  const r = await query(
+    `SELECT chat_id, first_name, username, premium_until
+     FROM users
+     WHERE is_premium = true
+       AND premium_until IS NOT NULL
+       AND premium_until > NOW()
+       AND premium_until <= $1
+     ORDER BY premium_until ASC`,
+    [cutoff]
+  );
+  return r.rows;
+}
+
+async function getDailyReport() {
+  const r = await query(
+    `SELECT
+      (SELECT COUNT(*) FROM users WHERE joined_at::date = CURRENT_DATE - 1) AS new_users,
+      (SELECT COUNT(*) FROM images WHERE created_at::date = CURRENT_DATE - 1) AS ops,
+      (SELECT COUNT(DISTINCT chat_id) FROM daily_usage WHERE date = CURRENT_DATE - 1) AS active_users,
+      (SELECT COUNT(*) FROM payment_orders WHERE status = 'confirmed' AND confirmed_at::date = CURRENT_DATE - 1) AS confirmed_orders,
+      (SELECT COALESCE(SUM(amount),0) FROM payment_orders WHERE status = 'confirmed' AND confirmed_at::date = CURRENT_DATE - 1) AS revenue,
+      (SELECT COUNT(*) FROM payment_orders WHERE status = 'pending' AND screenshot_file_id IS NOT NULL) AS pending_reviews,
+      (SELECT COUNT(*) FROM support_tickets WHERE created_at::date = CURRENT_DATE - 1) AS new_tickets
+    `
+  );
+  return r.rows[0] || null;
+}
+
+async function getUserProfile(chatId) {
+  const u = await query(
+    `SELECT u.*,
+            (SELECT COUNT(*) FROM referrals WHERE referrer_id = u.chat_id) AS referrals,
+            (SELECT COUNT(*) FROM daily_usage WHERE chat_id = u.chat_id AND date = CURRENT_DATE) AS today_used
+     FROM users u WHERE u.chat_id = $1`,
+    [chatId]
+  );
+  if (!u.rows[0]) return null;
+  const user = u.rows[0];
+
+  const orders = await query(
+    `SELECT order_ref, plan, amount, status, created_at FROM payment_orders
+     WHERE chat_id = $1 ORDER BY id DESC LIMIT 5`,
+    [chatId]
+  );
+  const subs = await query(
+    `SELECT plan, activated_by, expires_at, active FROM user_subscriptions
+     WHERE chat_id = $1 ORDER BY id DESC LIMIT 3`,
+    [chatId]
+  );
+  const tickets = await query(
+    `SELECT id, status, created_at FROM support_tickets
+     WHERE chat_id = $1 ORDER BY id DESC LIMIT 3`,
+    [chatId]
+  );
+  const images = await query(
+    `SELECT type, created_at FROM images WHERE chat_id = $1 ORDER BY id DESC LIMIT 5`,
+    [chatId]
+  );
+
+  return {
+    chat_id: Number(user.chat_id),
+    first_name: user.first_name,
+    username: user.username,
+    total_uses: user.total_uses,
+    today_used: parseInt(user.today_used || '0'),
+    referrals: parseInt(user.referrals || '0'),
+    is_premium: user.is_premium,
+    premium_until: user.premium_until,
+    banned: user.banned,
+    banned_reason: user.banned_reason,
+    joined_at: user.joined_at,
+    orders: orders.rows,
+    subs: subs.rows,
+    tickets: tickets.rows,
+    images: images.rows,
+  };
 }
 
 async function initWebTables() {
@@ -562,13 +764,17 @@ setInterval(cleanupOldUsage, 86400000);
 module.exports = {
   pool, query,
   upsertUser, getUsage, incrementUsage, logImage, addReferral,
-  getReferralCount, getUserStats, getAllUsers, getUserCount,
+  getReferralCount, getUserStats, getAllUsers, getPremiumUsers,
+  searchUsers, getUserCount,
   getTotalStats, getDailyActiveCount, createTicket, getOpenTickets,
+  getUserOpenTicket, appendToTicket, getUserTickets,
   getTicketById, replyTicket, closeTicket, activatePremiumByAdmin,
   getUserSubscriptions, createPaymentOrder, getPaymentOrderByRef,
-  getPendingPayments, attachScreenshot, resetPaymentScreenshot,
+  getPendingPayments, getOrders, deletePaymentOrder, attachScreenshot, resetPaymentScreenshot,
   getUserPendingOrder, cancelPaymentOrder, revertPaymentOrder,
-  confirmPaymentOrder, deactivateUser, getPremiumUsers,
+  confirmPaymentOrder, deactivateUser,
+  banUser, unbanUser, getBannedUsers, isBanned,
+  getExpiringPremium, getDailyReport, getUserProfile,
   createWebUser, findWebUserByEmail, findWebUserById,
   findWebUserByGoogleId, updateWebUserLogin, getWebUsage,
   incrementWebUsage, getWebUserStats,
