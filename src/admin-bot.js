@@ -53,6 +53,9 @@ bot.start(async (ctx) => {
     '   /send `<chat_id>` `<msg>` — DM any user\n' +
     '   /broadcast `<msg>` — Broadcast to all users\n' +
     '   /find `<name | @username | chat_id>` — Search user & get chat_id\n' +
+    '   /shot `<ref>` — View saved screenshot\n' +
+    '   /shots `<chat_id>` — All screenshots of a user\n' +
+    '   /delshot `<ref>` — Delete screenshot from DB\n' +
     '   /admin — Bot analytics\n' +
     '   /debug — System status'
   );
@@ -528,6 +531,107 @@ bot.command('find', async (ctx) => {
   return await ctx.replyWithMarkdown(msg, { reply_markup: { inline_keyboard: rows } });
 });
 
+async function sendScreenshotToAdmin(fileId, caption) {
+  const fileLink = await mainBot.telegram.getFileLink(fileId);
+  const res = await fetch(fileLink.href, { signal: AbortSignal.timeout(30000) });
+  if (!res.ok) throw new Error(`Download failed ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  return await bot.telegram.sendPhoto(ADMIN_ID, { source: buf }, { caption, parse_mode: 'Markdown' });
+}
+
+bot.command('shot', async (ctx) => {
+  const ref = (ctx.message.text.split(' ')[1] || '').trim();
+  if (!ref) return ctx.reply('Usage: /shot <order_ref>\n\nExample: /shot BG-A7X3K');
+  try {
+    const order = await db.getPaymentOrderByRef(ref);
+    if (!order) return ctx.reply(`❌ Order \`${escMd(ref)}\` not found.`);
+    if (!order.screenshot_file_id) return ctx.reply(`❌ No screenshot saved for \`${escMd(ref)}\` (already cleared/deleted).`);
+    await ctx.replyWithMarkdown('📤 Fetching saved screenshot…');
+    const name = escMd(order.first_name || order.username || `User ${order.chat_id}`);
+    await sendScreenshotToAdmin(order.screenshot_file_id,
+      `📸 *Screenshot — ${escMd(ref)}*\n\n👤 ${name}\n🆔 \`${order.chat_id}\`\n💳 ${escMd(order.plan)} | ${escMd(order.status)}`);
+  } catch (err) {
+    lastError = err.message;
+    await ctx.reply('❌ Error fetching screenshot. File may be invalid or too old.');
+  }
+});
+
+bot.command('shots', async (ctx) => {
+  const rawId = (ctx.message.text.split(' ')[1] || '').trim();
+  const chatId = parseInt(rawId);
+  if (isNaN(chatId)) return ctx.reply('Usage: /shots <chat_id>\n\nExample: /shots 1859416028');
+
+  const shots = await db.getUserScreenshots(chatId);
+  if (!shots.length) return ctx.reply(`📭 No screenshots found for \`${chatId}\`.`);
+
+  const users = await db.searchUsers(String(chatId));
+  const name = escMd((users[0] && (users[0].first_name || users[0].username)) || `User ${chatId}`);
+
+  let msg = `📸 *Screenshots — ${name}*\n\n🆔 \`${chatId}\` — ${shots.length} total\n\n`;
+  const rows = [];
+  shots.slice(0, 15).forEach((s, i) => {
+    const d = new Date(s.created_at).toLocaleString();
+    msg += `${i + 1}. ${s.order_ref}\n   ${d}\n   ${s.status || '—'}\n\n`;
+    rows.push([
+      Markup.button.callback('👁 View', `shot_view_${s.id}`),
+      Markup.button.callback('🗑 Del', `shot_del_${s.id}`),
+    ]);
+  });
+  msg += '👁 View = send photo\n🗑 Del = remove permanently from DB';
+  await ctx.replyWithMarkdown(msg, { reply_markup: { inline_keyboard: rows } });
+});
+
+bot.command('delshot', async (ctx) => {
+  const ref = (ctx.message.text.split(' ')[1] || '').trim();
+  if (!ref) return ctx.reply('Usage: /delshot <order_ref>\n\nClears screenshot reference AND wipes all saved history of this order.\n\nExample: /delshot BG-A7X3K');
+  try {
+    const order = await db.getPaymentOrderByRef(ref);
+    if (!order) return ctx.reply(`❌ Order \`${escMd(ref)}\` not found.`);
+    await db.resetPaymentScreenshot(ref);
+    await db.deleteScreenshotHistoryByRef(ref);
+    await ctx.reply(`🗑 Screenshot (current + history) permanently removed from DB for \`${escMd(ref)}\`.`);
+  } catch (err) {
+    lastError = err.message;
+    await ctx.reply('❌ Error deleting screenshot.');
+  }
+});
+
+bot.action(/shot_view_(\d+)/, async (ctx) => {
+  const shot = await db.getScreenshotById(parseInt(ctx.match[1]));
+  if (!shot) return ctx.answerCbQuery('Screenshot not found');
+  try {
+    await ctx.answerCbQuery('📤 Sending photo…');
+    const name = escMd(shot.first_name || shot.username || `User ${shot.chat_id}`);
+    await sendScreenshotToAdmin(shot.screenshot_file_id,
+      `📸 *Screenshot #${shot.id}*\n\n🔖 ${escMd(shot.order_ref)}\n👤 ${name}\n🆔 \`${shot.chat_id}\`\n📅 ${new Date(shot.created_at).toLocaleString()}`);
+  } catch (err) {
+    lastError = err.message;
+    await ctx.answerCbQuery('❌ Error fetching photo');
+  }
+});
+
+bot.action(/shot_del_(\d+)/, async (ctx) => {
+  const shotId = parseInt(ctx.match[1]);
+  await ctx.answerCbQuery();
+  await ctx.replyWithMarkdown(`🗑 *Delete screenshot #${shotId} permanently from DB?*\n\nThis cannot be undone.`, {
+    reply_markup: { inline_keyboard: [[
+      Markup.button.callback('✅ Yes, Delete', `shot_del_yes_${shotId}`),
+      Markup.button.callback('❌ Cancel', 'shot_del_no'),
+    ]] },
+  });
+});
+
+bot.action(/shot_del_yes_(\d+)/, async (ctx) => {
+  const shotId = parseInt(ctx.match[1]);
+  const ok = await db.deleteScreenshotHistory(shotId);
+  await ctx.answerCbQuery(ok ? '🗑 Deleted' : '❌ Not found');
+  await ctx.reply(ok ? `✅ Screenshot #${shotId} permanently removed from DB.` : '❌ Screenshot already gone.');
+});
+
+bot.action('shot_del_no', async (ctx) => {
+  await ctx.answerCbQuery('Cancelled');
+});
+
 bot.command('send', async (ctx) => {
   const parts = ctx.message.text.split(' ');
   if (parts.length < 3) return ctx.reply('Usage: /send <chat_id> <message>');
@@ -929,6 +1033,9 @@ bot.telegram.setMyCommands([
   { command: 'premiumusers', description: '👑 Active premium users' },
   { command: 'users', description: '👥 List or search all users' },
   { command: 'find', description: '🔎 Find user by name & get chat_id' },
+  { command: 'shot', description: '📸 View saved payment screenshot' },
+  { command: 'shots', description: '📸 All screenshots of a user' },
+  { command: 'delshot', description: '🗑 Delete screenshot from DB' },
   { command: 'profile', description: '👤 User drill-down profile' },
   { command: 'banned', description: '⛔ List banned users' },
   { command: 'ban', description: '⛔ Ban a user' },

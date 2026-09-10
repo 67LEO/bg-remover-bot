@@ -102,6 +102,13 @@ async function init() {
           created_at TIMESTAMPTZ DEFAULT NOW(),
           confirmed_at TIMESTAMPTZ
         );
+        CREATE TABLE IF NOT EXISTS payment_screenshots (
+          id SERIAL PRIMARY KEY,
+          order_ref TEXT NOT NULL,
+          chat_id BIGINT NOT NULL,
+          screenshot_file_id TEXT NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
       `);
     } finally {
       client.release();
@@ -408,6 +415,51 @@ async function attachScreenshot(orderRef, fileId) {
 
 async function resetPaymentScreenshot(orderRef) {
   await query('UPDATE payment_orders SET screenshot_file_id = NULL WHERE order_ref = $1', [orderRef]);
+}
+
+async function saveScreenshotHistory(orderRef, chatId, fileId) {
+  await query(
+    `INSERT INTO payment_screenshots (order_ref, chat_id, screenshot_file_id)
+     VALUES ($1, $2, $3)`,
+    [orderRef, chatId, fileId]
+  );
+}
+
+async function getScreenshotById(id) {
+  const r = await query(
+    `SELECT s.*, p.status, u.first_name, u.username
+     FROM payment_screenshots s
+     LEFT JOIN payment_orders p ON p.order_ref = s.order_ref
+     LEFT JOIN users u ON u.chat_id = s.chat_id
+     WHERE s.id = $1`,
+    [id]
+  );
+  return r.rows[0] || null;
+}
+
+async function getUserScreenshots(chatId) {
+  const r = await query(
+    `SELECT s.id, s.order_ref, s.screenshot_file_id, s.created_at, p.status
+     FROM payment_screenshots s
+     LEFT JOIN payment_orders p ON p.order_ref = s.order_ref
+     WHERE s.chat_id = $1
+     ORDER BY s.created_at DESC
+     LIMIT 50`,
+    [chatId]
+  );
+  return r.rows;
+}
+
+async function deleteScreenshotHistory(id) {
+  const r = await query(
+    'DELETE FROM payment_screenshots WHERE id = $1 RETURNING id',
+    [id]
+  );
+  return r.rows.length > 0;
+}
+
+async function deleteScreenshotHistoryByRef(orderRef) {
+  await query('DELETE FROM payment_screenshots WHERE order_ref = $1', [orderRef]);
 }
 
 async function getUserPendingOrder(chatId) {
@@ -771,6 +823,7 @@ module.exports = {
   getTicketById, replyTicket, closeTicket, activatePremiumByAdmin,
   getUserSubscriptions, createPaymentOrder, getPaymentOrderByRef,
   getPendingPayments, getOrders, deletePaymentOrder, attachScreenshot, resetPaymentScreenshot,
+  saveScreenshotHistory, getScreenshotById, getUserScreenshots, deleteScreenshotHistory, deleteScreenshotHistoryByRef,
   getUserPendingOrder, cancelPaymentOrder, revertPaymentOrder,
   confirmPaymentOrder, deactivateUser,
   banUser, unbanUser, getBannedUsers, isBanned,

@@ -894,6 +894,11 @@ function shareButton(chatId) {
 
 async function handlePaymentScreenshot(ctx, chatId, name, username, order, fileId) {
   await db.attachScreenshot(order.orderRef, fileId);
+  try {
+    await db.saveScreenshotHistory(order.orderRef, chatId, fileId);
+  } catch (err) {
+    console.error('Screenshot history save failed:', err.message);
+  }
   pendingPayment.delete(chatId);
 
   await ctx.reply('✅ Payment screenshot received! Admin will verify soon.\n\nYou can check your status via /stats');
