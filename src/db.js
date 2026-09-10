@@ -437,6 +437,20 @@ async function getScreenshotById(id) {
   return r.rows[0] || null;
 }
 
+async function getLatestScreenshotByChatId(chatId) {
+  const r = await query(
+    `SELECT s.id, s.order_ref, s.screenshot_file_id, s.created_at, p.status, u.first_name, u.username
+     FROM payment_screenshots s
+     LEFT JOIN payment_orders p ON p.order_ref = s.order_ref
+     LEFT JOIN users u ON u.chat_id = s.chat_id
+     WHERE s.chat_id = $1
+     ORDER BY s.created_at DESC
+     LIMIT 1`,
+    [chatId]
+  );
+  return r.rows[0] || null;
+}
+
 async function getUserScreenshots(chatId) {
   const r = await query(
     `SELECT s.id, s.order_ref, s.screenshot_file_id, s.created_at, p.status
@@ -823,7 +837,7 @@ module.exports = {
   getTicketById, replyTicket, closeTicket, activatePremiumByAdmin,
   getUserSubscriptions, createPaymentOrder, getPaymentOrderByRef,
   getPendingPayments, getOrders, deletePaymentOrder, attachScreenshot, resetPaymentScreenshot,
-  saveScreenshotHistory, getScreenshotById, getUserScreenshots, deleteScreenshotHistory, deleteScreenshotHistoryByRef,
+  saveScreenshotHistory, getScreenshotById, getLatestScreenshotByChatId, getUserScreenshots, deleteScreenshotHistory, deleteScreenshotHistoryByRef,
   getUserPendingOrder, cancelPaymentOrder, revertPaymentOrder,
   confirmPaymentOrder, deactivateUser,
   banUser, unbanUser, getBannedUsers, isBanned,

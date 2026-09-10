@@ -53,7 +53,7 @@ bot.start(async (ctx) => {
     '   /send `<chat_id>` `<msg>` — DM any user\n' +
     '   /broadcast `<msg>` — Broadcast to all users\n' +
     '   /find `<name | @username | chat_id>` — Search user & get chat_id\n' +
-    '   /shot `<ref>` — View saved screenshot\n' +
+    '   /shot `<ref | chat_id>` — View screenshot (latest for user)\n' +
     '   /shots `<chat_id>` — All screenshots of a user\n' +
     '   /delshot `<ref>` — Delete screenshot from DB\n' +
     '   /admin — Bot analytics\n' +
@@ -540,16 +540,28 @@ async function sendScreenshotToAdmin(fileId, caption) {
 }
 
 bot.command('shot', async (ctx) => {
-  const ref = (ctx.message.text.split(' ')[1] || '').trim();
-  if (!ref) return ctx.reply('Usage: /shot <order_ref>\n\nExample: /shot BG-A7X3K');
+  const input = (ctx.message.text.split(' ')[1] || '').trim();
+  if (!input) return ctx.reply('Usage: /shot <order_ref | chat_id>\n\nExamples:\n/shot BG-A7X3K\n/shot 1859416028');
+
   try {
-    const order = await db.getPaymentOrderByRef(ref);
-    if (!order) return ctx.reply(`❌ Order \`${escMd(ref)}\` not found.`);
-    if (!order.screenshot_file_id) return ctx.reply(`❌ No screenshot saved for \`${escMd(ref)}\` (already cleared/deleted).`);
+    if (/^\d+$/.test(input)) {
+      const chatId = parseInt(input);
+      const shot = await db.getLatestScreenshotByChatId(chatId);
+      if (!shot) return ctx.reply(`📭 No screenshots found for \`${chatId}\`.`);
+      await ctx.replyWithMarkdown('📤 Fetching latest screenshot…');
+      const name = escMd(shot.first_name || shot.username || `User ${shot.chat_id}`);
+      await sendScreenshotToAdmin(shot.screenshot_file_id,
+        `📸 *Latest Screenshot*\n\n🔖 ${escMd(shot.order_ref)}\n👤 ${name}\n🆔 \`${shot.chat_id}\`\n📅 ${new Date(shot.created_at).toLocaleString()}\n💳 ${shot.status || '—'}`);
+      return;
+    }
+
+    const order = await db.getPaymentOrderByRef(input);
+    if (!order) return ctx.reply(`❌ Order \`${escMd(input)}\` not found.`);
+    if (!order.screenshot_file_id) return ctx.reply(`❌ No screenshot saved for \`${escMd(input)}\` (already cleared/deleted).`);
     await ctx.replyWithMarkdown('📤 Fetching saved screenshot…');
     const name = escMd(order.first_name || order.username || `User ${order.chat_id}`);
     await sendScreenshotToAdmin(order.screenshot_file_id,
-      `📸 *Screenshot — ${escMd(ref)}*\n\n👤 ${name}\n🆔 \`${order.chat_id}\`\n💳 ${escMd(order.plan)} | ${escMd(order.status)}`);
+      `📸 *Screenshot — ${escMd(input)}*\n\n👤 ${name}\n🆔 \`${order.chat_id}\`\n💳 ${escMd(order.plan)} | ${escMd(order.status)}`);
   } catch (err) {
     lastError = err.message;
     await ctx.reply('❌ Error fetching screenshot. File may be invalid or too old.');
@@ -1033,7 +1045,7 @@ bot.telegram.setMyCommands([
   { command: 'premiumusers', description: '👑 Active premium users' },
   { command: 'users', description: '👥 List or search all users' },
   { command: 'find', description: '🔎 Find user by name & get chat_id' },
-  { command: 'shot', description: '📸 View saved payment screenshot' },
+  { command: 'shot', description: '📸 View screenshot (by ref or latest for user)' },
   { command: 'shots', description: '📸 All screenshots of a user' },
   { command: 'delshot', description: '🗑 Delete screenshot from DB' },
   { command: 'profile', description: '👤 User drill-down profile' },
