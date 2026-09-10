@@ -52,6 +52,7 @@ bot.start(async (ctx) => {
     '   /close `<id>` — Close ticket\n' +
     '   /send `<chat_id>` `<msg>` — DM any user\n' +
     '   /broadcast `<msg>` — Broadcast to all users\n' +
+    '   /find `<name | @username | chat_id>` — Search user & get chat_id\n' +
     '   /admin — Bot analytics\n' +
     '   /debug — System status'
   );
@@ -504,6 +505,29 @@ bot.command('users', async (ctx) => {
   await ctx.replyWithMarkdown(msg);
 });
 
+bot.command('find', async (ctx) => {
+  const parts = ctx.message.text.split(' ');
+  const q = parts.slice(1).join(' ').trim();
+  if (!q) return ctx.reply('Usage: /find <name | @username | chat_id>\n\nExample: /find mohit');
+
+  const results = await db.searchUsers(q.trim().replace(/^@/, ''));
+  if (!results.length) return ctx.reply(`🔍 No users found matching \`${escMd(q)}\`.`);
+
+  let msg = `🔎 *Search: "${escMd(q)}"* — ${results.length} result(s)\n\n`;
+  const rows = [];
+  results.forEach((u, i) => {
+    const name = escMd(u.first_name || u.username || 'User');
+    const premium = u.is_premium ? ' 👑' : '';
+    const banned = u.is_banned ? ' ⛔' : '';
+    msg += `${i + 1}. ${name}${premium}${banned}\n   🆔 \`${u.chat_id}\`\n`;
+    if (u.username) msg += `   @${escMd(u.username)} · ${u.total_uses} uses\n\n`;
+    else msg += `   ${u.total_uses} uses\n\n`;
+    rows.push([Markup.button.callback(`👤 ${u.first_name || u.username || u.chat_id}`, `user_${u.chat_id}`)]);
+  });
+  msg += 'Tap a button for full profile →';
+  return await ctx.replyWithMarkdown(msg, { reply_markup: { inline_keyboard: rows } });
+});
+
 bot.command('send', async (ctx) => {
   const parts = ctx.message.text.split(' ');
   if (parts.length < 3) return ctx.reply('Usage: /send <chat_id> <message>');
@@ -904,6 +928,7 @@ bot.telegram.setMyCommands([
   { command: 'delorder', description: '🗑️ Delete a payment order by ref' },
   { command: 'premiumusers', description: '👑 Active premium users' },
   { command: 'users', description: '👥 List or search all users' },
+  { command: 'find', description: '🔎 Find user by name & get chat_id' },
   { command: 'profile', description: '👤 User drill-down profile' },
   { command: 'banned', description: '⛔ List banned users' },
   { command: 'ban', description: '⛔ Ban a user' },
