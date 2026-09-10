@@ -194,8 +194,8 @@ async function getAllUsers() {
   return r.rows;
 }
 
-async function searchUsers(query) {
-  const q = `%${query}%`;
+async function searchUsers(term) {
+  const q = `%${term}%`;
   const r = await query(
     `SELECT chat_id, first_name, username, total_uses, is_premium, banned AS is_banned, joined_at
      FROM users
@@ -204,7 +204,7 @@ async function searchUsers(query) {
         OR LOWER(first_name) LIKE LOWER($2)
      ORDER BY total_uses DESC
      LIMIT 20`,
-    [query, q]
+    [term, q]
   );
   return r.rows;
 }
