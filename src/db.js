@@ -109,6 +109,18 @@ async function init() {
           screenshot_file_id TEXT NOT NULL,
           created_at TIMESTAMPTZ DEFAULT NOW()
         );
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS credits INTEGER DEFAULT 10;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS last_credit_reset DATE DEFAULT CURRENT_DATE;
+        CREATE TABLE IF NOT EXISTS ad_rewards (
+          id SERIAL PRIMARY KEY,
+          user_type TEXT CHECK(user_type IN ('bot','web')),
+          user_id BIGINT,
+          web_user_id UUID,
+          credits_given INTEGER DEFAULT 3,
+          ip_hash TEXT,
+          user_agent_hash TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
       `);
     } finally {
       client.release();
@@ -177,6 +189,40 @@ async function checkPremiumExpiry(user) {
   }
 }
 
+async function ensureCredits(chatId) {
+  const r = await query('SELECT credits, last_credit_reset FROM users WHERE chat_id = $1', [chatId]);
+  if (r.rows.length === 0) return 10;
+  const row = r.rows[0];
+  const today = new Date().toISOString().slice(0, 10);
+  if (row.last_credit_reset !== today) {
+    await query("UPDATE users SET credits = 10, last_credit_reset = $1 WHERE chat_id = $2", [today, chatId]);
+    return 10;
+  }
+  return row.credits === null ? 10 : row.credits;
+}
+
+async function getCredits(chatId) {
+  return ensureCredits(chatId);
+}
+
+async function deductCredit(chatId) {
+  const c = await ensureCredits(chatId);
+  if (c <= 0) return false;
+  await query('UPDATE users SET credits = credits - 1 WHERE chat_id = $1', [chatId]);
+  return true;
+}
+
+async function addCreditsBot(chatId, amount) {
+  const today = new Date().toISOString().slice(0, 10);
+  await query('INSERT INTO users (chat_id, credits, last_credit_reset) VALUES ($1, $2, $3) ON CONFLICT (chat_id) DO UPDATE SET credits = COALESCE(users.credits, 0) + $2', [chatId, amount, today]);
+}
+
+async function logAdReward(data) {
+  await query('INSERT INTO ad_rewards (user_type, user_id, web_user_id, credits_given, ip_hash, user_agent_hash) VALUES ($1,$2,$3,$4,$5,$6)', [
+    data.user_type || 'bot', data.user_id || null, data.web_user_id || null, data.credits_given || 3, data.ip_hash || null, data.user_agent_hash || null
+  ]);
+}
+
 async function getUserStats(chatId) {
   const r = await query('SELECT * FROM users WHERE chat_id = $1', [chatId]);
   const user = r.rows[0];
@@ -184,13 +230,15 @@ async function getUserStats(chatId) {
 
   await checkPremiumExpiry(user);
 
+  const credits = await ensureCredits(chatId);
   const dailyUsed = await getUsage(chatId);
   return {
     totalUses: user.total_uses,
     dailyUsed,
-    dailyRemaining: Math.max(0, user.is_premium ? Infinity : require('./config').FREE_LIMIT_DAILY - dailyUsed),
-    isPremium: !!user.is_premium,
-    premiumUntil: user.premium_until,
+    dailyRemaining: credits,
+    credits,
+    isPremium: false,
+    premiumUntil: null,
     referrals: await getReferralCount(chatId),
     joinedAt: user.joined_at,
   };
@@ -846,4 +894,5 @@ module.exports = {
   findWebUserByGoogleId, updateWebUserLogin, getWebUsage,
   incrementWebUsage, getWebUserStats,
   getAnonUsage, incrementAnonUsage,
+  ensureCredits, getCredits, deductCredit, addCreditsBot, logAdReward,
 };

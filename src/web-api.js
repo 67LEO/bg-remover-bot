@@ -47,6 +47,14 @@ const upload = multer({
 });
 
 const router = Router();
+const crypto = require('crypto');
+const earnTokens = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of earnTokens) {
+    if (now - v.exp > 600000) earnTokens.delete(k);
+  }
+}, 60000);
 
 function generateToken(user) {
   return jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: JWT_EXPIRY });
@@ -104,6 +112,39 @@ async function checkWebLimit(userIdOrAnon, res, isAnon) {
   }
   return stats;
 }
+
+router.post('/earn/token', async (req, res) => {
+  try {
+    const { chatId } = req.body || {};
+    if (!chatId) return res.status(400).json({ error: 'chatId required' });
+    const token = crypto.randomBytes(24).toString('hex');
+    earnTokens.set(token, { chatId: parseInt(chatId), exp: Date.now() + 600000, used: false });
+    const base = process.env.SITE_URL || '';
+    res.json({ token, url: base ? `${base}/earn?token=${token}` : `/earn?token=${token}` });
+  } catch {
+    res.status(500).json({ error: 'Failed' });
+  }
+});
+
+router.post('/earn/claim', async (req, res) => {
+  try {
+    const { token } = req.body || {};
+    if (!token) return res.status(400).json({ error: 'token required' });
+    const entry = earnTokens.get(token);
+    if (!entry || entry.used || Date.now() > entry.exp) return res.status(400).json({ error: 'Invalid or expired token' });
+    entry.used = true;
+    earnTokens.set(token, entry);
+    const ip = req.ip || req.socket.remoteAddress || '';
+    const ua = req.headers['user-agent'] || '';
+    const ipHash = crypto.createHash('sha256').update(ip).digest('hex').slice(0, 16);
+    const uaHash = crypto.createHash('sha256').update(ua).digest('hex').slice(0, 16);
+    await db.addCreditsBot(entry.chatId, 3);
+    await db.logAdReward({ user_type: 'bot', user_id: entry.chatId, credits_given: 3, ip_hash: ipHash, user_agent_hash: uaHash });
+    res.json({ ok: true, credits: 3, message: '+3 credits added!' });
+  } catch {
+    res.status(500).json({ error: 'Failed' });
+  }
+});
 
 router.post('/auth/signup', async (req, res) => {
   try {
