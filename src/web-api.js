@@ -48,13 +48,6 @@ const upload = multer({
 
 const router = Router();
 const crypto = require('crypto');
-const earnTokens = new Map();
-setInterval(() => {
-  const now = Date.now();
-  for (const [k, v] of earnTokens) {
-    if (now - v.exp > 600000) earnTokens.delete(k);
-  }
-}, 60000);
 
 function generateToken(user) {
   return jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: JWT_EXPIRY });
@@ -113,79 +106,59 @@ async function checkWebLimit(userIdOrAnon, res, isAnon) {
   return stats;
 }
 
-// Anti-abuse limits for ad rewards (override via env)
-const AD_DAILY_LIMIT = parseInt(process.env.AD_DAILY_LIMIT || '5');        // rewards per bot user per day
-const AD_IP_DAILY_LIMIT = parseInt(process.env.AD_IP_DAILY_LIMIT || '20'); // rewards per IP per day
-const AD_MIN_WATCH_MS = parseInt(process.env.AD_MIN_WATCH_MS || '8000');   // min time between /earn/start and /earn/claim
-const earnClaiming = new Set(); // chatIds with a claim in flight (so concurrent claims can't beat the daily cap)
-const hashOf = (s) => crypto.createHash('sha256').update(s).digest('hex').slice(0, 16);
-const LIMIT_MSG = 'Daily ad reward limit reached. Come back tomorrow, or use /share to invite friends for credits.';
+// AdsGram bot-ad Reward URL. Set in the AdsGram block as:
+//   https://<your-domain>/api/adsgram/reward?userid=[userId]&secret=<ADSGRAM_REWARD_SECRET>
+// Docs don't list the user-id parameter name, so a few common spellings are accepted (unknown param names are logged).
+// A reward is only granted for an ad this bot actually sent to that user (one reward per ad), capped per day.
+const adstate = require('./adstate');
+const BOT_USERNAME = process.env.BOT_USERNAME || 'AiBgRemover_Bot';
+const USER_ID_PARAMS = ['userid', 'userId', 'user_id', 'tgid', 'tg_id', 'uid', 'user', 'id'];
 
-router.post('/earn/token', async (req, res) => {
+function rewardPage(ok, msg) {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Reward</title></head>
+<body style="font-family:system-ui,sans-serif;text-align:center;padding:48px 20px;background:#0f172a;color:#f1f5f9">
+<div style="font-size:48px">${ok ? '✅' : '⚠️'}</div><h2>${msg}</h2>
+<p><a style="color:#38bdf8" href="https://t.me/${BOT_USERNAME}">Back to the bot</a></p></body></html>`;
+}
+
+router.get('/adsgram/reward', async (req, res) => {
+  const wantsHtml = String(req.headers.accept || '').includes('text/html');
+  const reply = (status, ok, msg, extra = {}) =>
+    wantsHtml ? res.status(status).type('html').send(rewardPage(ok, msg)) : res.status(status).json({ ok, message: msg, ...extra });
+  let chatId = 0, consumed = false;
   try {
-    const chatId = parseInt((req.body || {}).chatId);
-    if (!chatId) return res.status(400).json({ error: 'chatId required' });
-    const base = process.env.SITE_URL || '';
-    const urlFor = (t) => (base ? `${base}/earn?token=${t}` : `/earn?token=${t}`);
+    const expected = process.env.ADSGRAM_REWARD_SECRET || '';
+    const given = String(req.query.secret || '');
+    if (!expected) return reply(503, false, 'Not configured');
+    const a = Buffer.from(given), b = Buffer.from(expected);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return reply(403, false, 'Forbidden');
+
+    const key = USER_ID_PARAMS.find(k => parseInt(req.query[k]) > 0);
+    chatId = key ? parseInt(req.query[key]) : 0;
+    if (!chatId) {
+      console.log('AdsGram reward call without a usable user id; query params:', Object.keys(req.query).filter(k => k !== 'secret').join(','));
+      return reply(400, false, 'Could not identify the user. Please open the reward link from the bot again.');
+    }
 
     const { byUser } = await db.countAdRewardsToday(chatId, '');
-    if (byUser >= AD_DAILY_LIMIT) return res.status(429).json({ error: LIMIT_MSG, limitReached: true });
+    if (byUser >= adstate.AD_DAILY_LIMIT) return reply(200, false, 'Daily ad reward limit reached. Come back tomorrow!', { limitReached: true });
 
-    // One live token per user: pressing the button repeatedly must not mint unlimited tokens
-    for (const [t, v] of earnTokens) {
-      if (v.chatId === chatId && !v.used && Date.now() < v.exp) return res.json({ token: t, url: urlFor(t) });
-    }
-    const token = crypto.randomBytes(24).toString('hex');
-    earnTokens.set(token, { chatId, exp: Date.now() + 600000, used: false, startedAt: null });
-    res.json({ token, url: urlFor(token) });
+    if (!adstate.consumeIssued(chatId)) return reply(200, false, 'No active ad found. Tap "Watch Ad & Earn Credits" in the bot to get a new one.');
+    consumed = true;
+
+    await db.addCreditsBot(chatId, adstate.AD_REWARD_CREDITS);
+    await db.logAdReward({ user_type: 'bot', user_id: chatId, credits_given: adstate.AD_REWARD_CREDITS, ip_hash: 'adsgram', user_agent_hash: null });
+
+    // Best-effort DM so the user sees the credit in the chat
+    fetch(`https://api.telegram.org/bot${config.BOT_TOKEN}/sendMessage`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: `✅ +${adstate.AD_REWARD_CREDITS} credits added! Thanks for watching.` }),
+    }).catch(() => {});
+
+    reply(200, true, `+${adstate.AD_REWARD_CREDITS} credits added!`, { credits: adstate.AD_REWARD_CREDITS });
   } catch {
-    res.status(500).json({ error: 'Failed' });
-  }
-});
-
-// Called by the Earn page right before the ad is shown; claim needs AD_MIN_WATCH_MS to have passed since this
-router.post('/earn/start', (req, res) => {
-  const { token } = req.body || {};
-  const entry = token && earnTokens.get(token);
-  if (!entry || entry.used || Date.now() > entry.exp) return res.status(400).json({ error: 'Invalid or expired token' });
-  if (!entry.startedAt) entry.startedAt = Date.now();
-  res.json({ ok: true });
-});
-
-router.post('/earn/claim', async (req, res) => {
-  let entry = null;
-  try {
-    const { token } = req.body || {};
-    if (!token) return res.status(400).json({ error: 'token required' });
-    entry = earnTokens.get(token);
-    if (!entry || entry.used || Date.now() > entry.exp) return res.status(400).json({ error: 'Invalid or expired token' });
-    if (!entry.startedAt || Date.now() - entry.startedAt < AD_MIN_WATCH_MS) {
-      return res.status(400).json({ error: 'Ad not completed. No credits added.' });
-    }
-    if (earnClaiming.has(entry.chatId)) return res.status(429).json({ error: 'Another claim is in progress. Try again.' });
-
-    const ip = req.ip || req.socket.remoteAddress || '';
-    const ipHash = hashOf(ip);
-    const uaHash = hashOf(req.headers['user-agent'] || '');
-
-    earnClaiming.add(entry.chatId);
-    entry.used = true; // burn first so the same token can't be claimed twice concurrently
-    try {
-      const { byUser, byIp } = await db.countAdRewardsToday(entry.chatId, ipHash);
-      if (byUser >= AD_DAILY_LIMIT || byIp >= AD_IP_DAILY_LIMIT) {
-        return res.status(429).json({ error: LIMIT_MSG, limitReached: true });
-      }
-      await db.addCreditsBot(entry.chatId, 3);
-      await db.logAdReward({ user_type: 'bot', user_id: entry.chatId, credits_given: 3, ip_hash: ipHash, user_agent_hash: uaHash });
-    } catch (err) {
-      entry.used = false; // DB failure: don't burn the user's token
-      throw err;
-    } finally {
-      earnClaiming.delete(entry.chatId);
-    }
-    res.json({ ok: true, credits: 3, message: '+3 credits added!' });
-  } catch {
-    res.status(500).json({ error: 'Failed' });
+    if (consumed) adstate.markIssued(chatId); // DB failed after using the ad up: let the user retry
+    reply(500, false, 'Something went wrong. Please try the reward link again.');
   }
 });
 

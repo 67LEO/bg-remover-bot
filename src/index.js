@@ -7,6 +7,8 @@ const adminBot = require('./admin-bot');
 const { getVoices, generateSpeech, SUPPORTED_LANGUAGES } = require('./elevenlabs');
 const { generateVideo } = require('./video');
 const { initPool } = require('./firebase');
+const ads = require('./ads');
+const adstate = require('./adstate');
 const fs = require('fs');
 
 const __origFetch = globalThis.fetch;
@@ -62,30 +64,38 @@ function refundCredit(chatId) {
 }
 
 bot.action('earn_credits', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const chatId = ctx.chat.id;
   try {
-    const chatId = ctx.chat.id;
-    const baseWeb = process.env.WEB_INTERNAL_URL || `http://127.0.0.1:${process.env.WEB_PORT || 3001}`;
-    // Telegram web_app buttons need a public https URL: prefer the deployed URL, never a localhost SITE_URL
-    const httpsOnly = (u) => (u && /^https:\/\//.test(u) ? u.replace(/\/+$/, '') : null);
-    const site = httpsOnly(process.env.RENDER_EXTERNAL_URL) || httpsOnly(process.env.SITE_URL) || 'https://tg-bot-1395.onbelmo.uk';
-    const r = await fetch(baseWeb + '/api/earn/token', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ chatId })
-    });
-    const j = await r.json();
-    if (j.limitReached || !(j.url || j.token)) {
-      await ctx.answerCbQuery().catch(() => {});
-      return await ctx.reply(j.error || '❌ Could not start the ad right now. Please try again in a moment.');
+    if (!ads.isConfigured()) {
+      return await ctx.reply('🎬 Ads are not available right now. Your credits refill every day, or invite friends with /share!');
     }
-    const url = site + '/earn?token=' + j.token;
-    await ctx.reply('🎬 Watch ad to earn +3 credits', Markup.inlineKeyboard([
-      [Markup.button.webApp('Open Ad Page', url)]
-    ]));
-    await ctx.answerCbQuery();
+    const { byUser } = await db.countAdRewardsToday(chatId, '');
+    if (byUser >= adstate.AD_DAILY_LIMIT) {
+      return await ctx.reply('✅ You have used all of today\'s ad rewards. They reset tomorrow — or invite friends with /share for more credits!');
+    }
+
+    const ad = await ads.fetchAd(chatId, ctx.from?.language_code);
+    if (!ad) {
+      return await ctx.reply('😕 No ad is available right now. Please try again in a few minutes.');
+    }
+
+    adstate.markIssued(chatId);
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.url(ad.button_name || 'Open ad', ad.click_url)],
+      [Markup.button.url(ad.button_reward_name || `Claim +${adstate.AD_REWARD_CREDITS} credits`, ad.reward_url)],
+    ]);
+    // HTML text, and not forwardable (AdsGram requirement)
+    const extra = { parse_mode: 'HTML', protect_content: true, reply_markup: keyboard.reply_markup };
+    const intro = `Open the ad, then come back and tap the claim button for +${adstate.AD_REWARD_CREDITS} credits.\n\n`;
+    if (ad.image_url) {
+      await ctx.replyWithPhoto(ad.image_url, { ...extra, caption: intro + (ad.text_html || '') });
+    } else {
+      await ctx.reply(intro + (ad.text_html || ''), { ...extra, link_preview_options: { is_disabled: true } });
+    }
   } catch (e) {
     console.error('earn_credits failed:', e.message);
-    await ctx.answerCbQuery('Ad is unavailable right now. Please try again in a minute.', { show_alert: true }).catch(() => {});
+    await ctx.reply('Ad is unavailable right now. Please try again in a minute.').catch(() => {});
   }
 });
 

@@ -11,7 +11,6 @@ import Imagine from './pages/Imagine';
 import Video from './pages/Video';
 import Voice from './pages/Voice';
 import Premium from './pages/Premium';
-import Earn from './pages/Earn';
 
 export default function App() {
   return (
@@ -27,7 +26,6 @@ export default function App() {
         <Route path="/tools/video" element={<Video />} />
         <Route path="/tools/voice" element={<Voice />} />
         <Route path="/premium" element={<Premium />} />
-        <Route path="/earn" element={<Earn />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
