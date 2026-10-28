@@ -6,6 +6,8 @@ const path = require('path');
 const db = require('./db');
 
 const app = express();
+// Requests arrive via the bot server's proxy on loopback; trust it so req.ip is the real client IP (rate limits, ad caps)
+app.set('trust proxy', 'loopback');
 
 app.use(helmet({
   contentSecurityPolicy: false,

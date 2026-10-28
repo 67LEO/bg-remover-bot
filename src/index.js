@@ -64,8 +64,10 @@ function refundCredit(chatId) {
 bot.action('earn_credits', async (ctx) => {
   try {
     const chatId = ctx.chat.id;
-    const baseWeb = process.env.WEB_INTERNAL_URL || 'http://localhost:3001';
-    const site = process.env.SITE_URL || 'https://tg-bot-1395.onbelmo.uk';
+    const baseWeb = process.env.WEB_INTERNAL_URL || `http://127.0.0.1:${process.env.WEB_PORT || 3001}`;
+    // Telegram web_app buttons need a public https URL: prefer the deployed URL, never a localhost SITE_URL
+    const httpsOnly = (u) => (u && /^https:\/\//.test(u) ? u.replace(/\/+$/, '') : null);
+    const site = httpsOnly(process.env.RENDER_EXTERNAL_URL) || httpsOnly(process.env.SITE_URL) || 'https://tg-bot-1395.onbelmo.uk';
     const r = await fetch(baseWeb + '/api/earn/token', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -76,13 +78,14 @@ bot.action('earn_credits', async (ctx) => {
       await ctx.answerCbQuery().catch(() => {});
       return await ctx.reply(j.error || '❌ Could not start the ad right now. Please try again in a moment.');
     }
-    const url = j.url || (site + '/earn?token=' + j.token);
+    const url = site + '/earn?token=' + j.token;
     await ctx.reply('🎬 Watch ad to earn +3 credits', Markup.inlineKeyboard([
       [Markup.button.webApp('Open Ad Page', url)]
     ]));
     await ctx.answerCbQuery();
   } catch (e) {
-    await ctx.answerCbQuery('Error');
+    console.error('earn_credits failed:', e.message);
+    await ctx.answerCbQuery('Ad is unavailable right now. Please try again in a minute.', { show_alert: true }).catch(() => {});
   }
 });
 
@@ -892,7 +895,7 @@ async function processPhotoAsync(ctx, chatId, doUpscale, processingMsg) {
       await db.logImage(chatId, imageBuffer.length, resultBuffer.length, 'bg_remove').catch(e => console.error('usage log failed:', e.message));
         await ctx.telegram.sendDocument(
           chatId,
-          { source: resultBuffer },
+          { source: resultBuffer, filename: 'background-removed.png' },
           {
             caption: doUpscale
               ? `✨ 4x HD Upscale done!`
@@ -1112,7 +1115,26 @@ function handleWithTimeout(botInstance, json) {
   ]);
 }
 
+// Only PORT is public on the host, so the website + /api (served by web-server.js on WEB_PORT) are reached through here
+function proxyToWeb(req, res) {
+  // The platform proxy appends the real client IP last; use that and drop anything the client forged earlier in the chain
+  const chain = String(req.headers['x-forwarded-for'] || '').split(',').map(s => s.trim()).filter(Boolean);
+  const clientIp = chain.length ? chain[chain.length - 1] : req.socket.remoteAddress;
+  const upstream = http.request(
+    { host: '127.0.0.1', port: process.env.WEB_PORT || 3001, method: req.method, path: req.url, headers: { ...req.headers, 'x-forwarded-for': clientIp } },
+    (up) => { res.writeHead(up.statusCode, up.headers); up.pipe(res); }
+  );
+  upstream.on('error', () => {
+    if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain' });
+    res.end('Website temporarily unavailable');
+  });
+  req.pipe(upstream);
+}
+
 const server = http.createServer((req, res) => {
+  if (req.url !== '/' && req.url !== '/webhook' && req.url !== '/admin-webhook') {
+    return proxyToWeb(req, res);
+  }
   if (req.url === '/webhook' || req.url === '/admin-webhook') {
     const bufs = [];
     req.on('data', chunk => bufs.push(chunk));
@@ -1137,7 +1159,7 @@ const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('Bot running');
 });
-server.timeout = 60000;
+server.timeout = 180000; // proxied website requests (video/image processing) can take longer than a webhook
 
 server.listen(PORT, () => {
   console.log(`Bot server on port ${PORT}`);
