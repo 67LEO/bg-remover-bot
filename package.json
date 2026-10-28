@@ -7,7 +7,7 @@
     "node": "22.x"
   },
   "scripts": {
-    "start": "concurrently \"node src/index.js\" \"node src/web-server.js\"",
+    "start": "node src/index.js",
     "dev": "concurrently -n BE,FE -c blue,green \"node --watch src/web-server.js\" \"npm --prefix website run dev\"",
     "dev:bot": "node --watch src/index.js",
     "web": "npm run build --prefix website && node src/web-server.js"

@@ -68,6 +68,8 @@ app.get('/{*path}', (req, res) => {
 });
 
 const PORT = process.env.WEB_PORT || 3001;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Web server on port ${PORT}`);
 });
+// Don't take the bot down if the port is taken (e.g. web-server.js also started separately)
+server.on('error', (err) => console.error('Web server failed to start:', err.message));

@@ -1165,6 +1165,16 @@ server.listen(PORT, () => {
   console.log(`Bot server on port ${PORT}`);
 });
 
+// Run the website/API in this same process so it's always up whatever the host's start command is
+// (earn page, /api/*). Set INLINE_WEB=false to run src/web-server.js as its own process instead.
+if (process.env.INLINE_WEB !== 'false') {
+  try {
+    require('./web-server');
+  } catch (err) {
+    console.error('Web server failed to load:', err.message);
+  }
+}
+
 async function startBot() {
   await initPool();
   console.log('Admin bot:', adminBot ? 'enabled' : 'DISABLED (ADMIN_BOT_TOKEN not set)');
