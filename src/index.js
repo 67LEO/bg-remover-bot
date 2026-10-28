@@ -1070,16 +1070,16 @@ async function processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, p
       maskBuffer = await getMask(imageBuffer);
       resultBuffer = await applyMask(imageBuffer, maskBuffer);
       await db.logImage(chatId, imageBuffer.length, resultBuffer.length, 'bg_remove');
-      await ctx.telegram.sendDocument(
-        chatId,
-        { source: resultBuffer, filename: 'result.png' },
-        {
-          caption: userStats?.isPremium
-            ? '✨ Background removed! (Unlimited)'
-            : `✨ Background removed! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`,
-          reply_markup: resultButtons(chatId).reply_markup,
-        }
-      );
+        await ctx.telegram.sendDocument(
+          chatId,
+          { source: resultBuffer },
+          {
+            caption: doUpscale
+              ? `✨ 4x HD Upscale done!`
+              : `✨ Background removed!`,
+            reply_markup: resultButtons(chatId).reply_markup
+          }
+        );
       recentImage.set(chatId, { imageBuffer, maskBuffer, _ts: Date.now() });
     }
 
@@ -1110,7 +1110,7 @@ async function generateImageAsync(ctx, chatId, text, userStats, dailyUsed, msg, 
       { source: imgBuf },
       { caption: userStats?.isPremium
           ? '✨ AI Generated! (Unlimited)'
-          : `✨ AI Generated! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`,
+          : `✨ AI Generated!`,
         reply_markup: {
           inline_keyboard: [
             [Markup.button.callback('🔄 Upscale 4x', 'gen_upscale'),
@@ -1152,7 +1152,7 @@ async function generateVideoAsync(ctx, chatId, text, userStats, dailyUsed, msg) 
       { source: buf, filename: 'video.mp4' },
       { caption: userStats?.isPremium
           ? '🎬 AI Video Generated! (Unlimited)'
-          : `🎬 AI Video Generated! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`,
+          : `🎬 AI Video Generated!`,
         reply_markup: shareButton(chatId).reply_markup }
     );
     await db.incrementUsage(chatId);
