@@ -39,6 +39,28 @@ function parseReferral(ctx) {
   return null;
 }
 
+// ---- Credits helpers ----
+function earnKeyboard() {
+  return Markup.inlineKeyboard([[Markup.button.callback('🎬 Watch Ad & Earn Credits', 'earn_credits')]]);
+}
+
+const NO_CREDITS_TEXT = '😅 You have *0* credits left!\n\n🎬 Watch ad to earn +3 credits';
+
+async function sendNoCredits(ctx) {
+  return ctx.replyWithMarkdown(NO_CREDITS_TEXT, earnKeyboard());
+}
+
+// Atomically deducts 1 credit. If none are left, shows the earn prompt and returns false.
+async function takeCredit(ctx, chatId) {
+  const ok = await db.deductCredit(chatId).catch(() => false);
+  if (!ok) await sendNoCredits(ctx).catch(() => {});
+  return ok;
+}
+
+function refundCredit(chatId) {
+  return db.addCreditsBot(chatId, 1).catch(err => console.error('Credit refund failed:', err.message));
+}
+
 bot.action('earn_credits', async (ctx) => {
   try {
     const chatId = ctx.chat.id;
@@ -50,6 +72,10 @@ bot.action('earn_credits', async (ctx) => {
       body: JSON.stringify({ chatId })
     });
     const j = await r.json();
+    if (j.limitReached || !(j.url || j.token)) {
+      await ctx.answerCbQuery().catch(() => {});
+      return await ctx.reply(j.error || '❌ Could not start the ad right now. Please try again in a moment.');
+    }
     const url = j.url || (site + '/earn?token=' + j.token);
     await ctx.reply('🎬 Watch ad to earn +3 credits', Markup.inlineKeyboard([
       [Markup.button.webApp('Open Ad Page', url)]
@@ -80,19 +106,11 @@ bot.use(async (ctx, next) => {
       } catch {}
     }
 
-    if (premiumCache.has(chatId)) return next();
-
     const result = checkRateLimit(chatId);
     if (!result.ok) {
-      const stats = await db.getUserStats(chatId).catch(() => null);
-      if (stats?.isPremium) {
-        premiumCache.add(chatId);
-        return next();
-      }
       const waitSec = Math.ceil(result.remaining / 1000);
       return await ctx.replyWithMarkdown(
-        `⏳ *Too many requests!*\n\nPlease wait *~${waitSec}s* before sending the next request.`,
-        Markup.inlineKeyboard([Markup.button.callback('⭐ Go Premium', 'buy_monthly')])
+        `⏳ *Too many requests!*\n\nPlease wait *~${waitSec}s* before sending the next request.`
       );
     }
   }
@@ -105,10 +123,13 @@ bot.start(async (ctx) => {
 
   const referrerId = parseReferral(ctx);
   if (referrerId) {
-    await db.addReferral(referrerId, chatId);
-    try {
-      await ctx.telegram.sendMessage(referrerId, '🎉 Someone joined using your referral link! Keep sharing to unlock unlimited premium days!');
-    } catch {}
+    const isNew = await db.addReferral(referrerId, chatId);
+    if (isNew) {
+      await db.addCreditsBot(referrerId, 3).catch(() => {});
+      try {
+        await ctx.telegram.sendMessage(referrerId, '🎉 Someone joined using your referral link! You earned +3 credits. Keep sharing!');
+      } catch {}
+    }
   }
 
   await ctx.replyWithMarkdown(
@@ -127,7 +148,7 @@ bot.start(async (ctx) => {
     '/video — AI video from text\n' +
     '/voice — Text to speech\n\n' +
     '⚡ /help • /share • /stats • /support • /premium\n\n' +
-    'Everything free! /share to get unlimited 🚀'
+    '🎁 10 free credits every day — watch an ad or /share for more 🚀'
   );
 });
 
@@ -155,18 +176,15 @@ bot.command('share', async (ctx) => {
   const botUsername = ctx.botInfo?.username || process.env.BOT_USERNAME || 'AiBgRemover_Bot';
   const count = await db.getReferralCount(chatId);
   await ctx.replyWithMarkdown(
-    '🤝 *Share & Earn Unlimited Usage!*\n\n' +
+    '🤝 *Share & Earn Credits!*\n\n' +
     `You've referred *${count} friends* so far!\n\n` +
     '🔗 *Your referral link:*\n' +
     `\`https://t.me/${botUsername}?start=${chatId}\`\n\n` +
-    '🎁 *Rewards:*\n' +
-    '• 3 friends → +7 days unlimited\n' +
-    '• 5 friends → +1 month unlimited\n' +
-    '• 10 friends → +3 months unlimited\n\n' +
+    '🎁 *Reward:* +3 credits for every friend who joins with your link\n\n' +
     'Tap 👇 to share with friends!',
     Markup.inlineKeyboard([
         [Markup.button.switchToChat('📤 Share with Friends', `Try @${botUsername} — AI image editor: remove bg, upscale, AI bg, images, voice & video 🚀`)],
-        [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
+        [Markup.button.callback('🎬 Watch Ad & Earn Credits', 'earn_credits')],
       [Markup.button.url('📋 Copy Link', `https://t.me/${botUsername}?start=${chatId}`)],
     ])
   );
@@ -184,22 +202,14 @@ bot.command('voice', async (ctx) => {
 
   const userStats = await db.getUserStats(chatId);
   const credits = userStats?.dailyRemaining ?? 10;
-  if (credits <= 0) {
-    return await ctx.replyWithMarkdown(
-      `😅 You have *0* credits left!\n\n` +
-      '🎬 Watch ad to earn +3 credits',
-      Markup.inlineKeyboard([
-        [Markup.button.callback('🎬 Watch Ad & Earn Credits', 'earn_credits')],
-      ])
-    );
-  }
+  if (credits <= 0) return await sendNoCredits(ctx);
 
   const rows = SUPPORTED_LANGUAGES.map(lang =>
     [Markup.button.callback(`${lang.native} (${lang.name})`, `voice_lang_${lang.code}`)]
   );
   voiceSession.set(chatId, { step: 'language', _ts: Date.now() });
   await ctx.replyWithMarkdown(
-    `🎤 *Voice Generator*\n\nCredits left: *${userStats?.dailyRemaining ?? 10}*\n\nSelect a language 👇`,
+    `🎤 *Voice Generator*\n\nCredits left: *${credits}*\n\nSelect a language 👇`,
     Markup.inlineKeyboard(rows)
   );
 });
@@ -216,25 +226,12 @@ bot.command('imagine', async (ctx) => {
       '🎨 *AI Image Generator*\n\n' +
       'Usage: `/imagine <your prompt>`\n\n' +
       'Example: `/imagine a cute cat on a windowsill, photorealistic`\n\n' +
-      (userStats?.isPremium
-        ? '✅ *Unlimited Access*\n\n'
-        : `🔹 Free today: *${config.FREE_LIMIT_DAILY} operations*\n\n`) +
+      `🔹 Credits left: *${userStats?.dailyRemaining ?? 10}*\n\n` +
       'Powered by FLUX Pro 🚀'
     );
   }
 
-  const dailyUsed = userStats?.dailyUsed ?? 0;
-
-  if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
-    return await ctx.replyWithMarkdown(
-      `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
-      '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
-      Markup.inlineKeyboard([
-        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, AI bg, images, voice & video 🚀`)],
-        [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
-      ])
-    );
-  }
+  if ((userStats?.dailyRemaining ?? 10) <= 0) return await sendNoCredits(ctx);
 
   imagineSession.set(chatId, { prompt: text, _ts: Date.now() });
   await ctx.reply(
@@ -264,31 +261,16 @@ bot.command('video', async (ctx) => {
       '🎬 *AI Video Generator*\n\n' +
       'Usage: `/video <your prompt>`\n\n' +
       'Example: `/video a cat playing piano in a garden`\n\n' +
-      (userStats?.isPremium
-        ? '✅ *Unlimited Access*\n\n'
-        : `🔹 Free today: *${config.FREE_LIMIT_DAILY} operations*\n\n`) +
+      `🔹 Credits left: *${userStats?.dailyRemaining ?? 10}*\n\n` +
       'Powered by AI 🚀'
     );
   }
 
-  const dailyUsed = userStats?.dailyUsed ?? 0;
-
-  if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
-    return await ctx.replyWithMarkdown(
-      `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
-      '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
-      Markup.inlineKeyboard([
-        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, AI bg, images, voice & video 🚀`)],
-        [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
-      ])
-    );
-  }
+  if (!(await takeCredit(ctx, chatId))) return;
 
   const msg = await ctx.reply('🎬 Generating AI video... (1-2 min)');
 
-  const credits2 = userStats?.dailyRemaining ?? 10;
-  db.deductCredit(chatId).catch(()=>{});
-  generateVideoAsync(ctx, chatId, text, userStats, credits2 - 1, msg)
+  generateVideoAsync(ctx, chatId, text, msg)
     .catch(err => console.error('Background video error:', err.message));
 });
 
@@ -302,7 +284,6 @@ bot.command('stats', async (ctx) => {
     `📅 Used today: *${stats.dailyUsed}*\n` +
     `🎯 Credits left: *${stats.dailyRemaining}*\n` +
     `👥 Friends referred: *${stats.referrals}*\n` +
-    `🏅 Plan: *${stats.isPremium ? 'Premium' : 'Free'}*\n` +
     `📆 Joined: *${stats.joinedAt}*`
   );
 });
@@ -349,47 +330,16 @@ bot.command('support', async (ctx) => {
 
 
 
-function generateOrderRef() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let ref = 'BG-';
-  for (let i = 0; i < 5; i++) ref += chars[Math.floor(Math.random() * chars.length)];
-  return ref;
-}
-
 bot.command('premium', async (ctx) => {
-  const chatId = ctx.chat.id;
-  const stats = await db.getUserStats(chatId);
-  const plans = config.PREMIUM_PLANS;
-
-  if (stats && stats.isPremium) {
-    const untilDate = stats.premiumUntil ? new Date(stats.premiumUntil).toLocaleDateString() : 'N/A';
-    let msg = `⭐ *You already have Premium!*\n\n📅 Valid until: ${untilDate}\n\nWant to extend?\n\n`;
-    msg += `📆 *Extend Monthly* — ₹${plans.monthly.price} (+30 days)\n`;
-    msg += `🎉 *Extend Yearly* — ₹${plans.yearly.price} (+365 days)`;
-    await ctx.replyWithMarkdown(msg, Markup.inlineKeyboard([
-      [Markup.button.callback('📆 Extend Monthly — ₹' + plans.monthly.price, 'buy_monthly')],
-      [Markup.button.callback('🎉 Extend Yearly — ₹' + plans.yearly.price, 'buy_yearly')],
-    ]));
-    return;
-  }
-
-  let msg = '🎯 *Premium Plans*\n\nUnlimited background removal, upscale, AI bg, AI generation, video & voice!\n';
-  msg += '\n📆 *Monthly* — ₹' + plans.monthly.price + ' (30 days)\n';
-  msg += '🎉 *Yearly* — ₹' + plans.yearly.price + ' (365 days)\n\n';
-  msg += 'Select a plan below 👇';
-
-  await ctx.replyWithMarkdown(msg, Markup.inlineKeyboard([
-    [Markup.button.callback('📆 Monthly — ₹' + plans.monthly.price, 'buy_monthly')],
-    [Markup.button.callback('🎉 Yearly — ₹' + plans.yearly.price, 'buy_yearly')],
-  ]));
-});
-
-bot.action('buy_monthly', async (ctx) => {
-  await handleBuyPlan(ctx, 'monthly');
-});
-
-bot.action('buy_yearly', async (ctx) => {
-  await handleBuyPlan(ctx, 'yearly');
+  const credits = await db.getCredits(ctx.chat.id).catch(() => 10);
+  await ctx.replyWithMarkdown(
+    '🎬 *Free Credits*\n\n' +
+    `Credits left today: *${credits}*\n\n` +
+    '• 10 free credits every day\n' +
+    '• Watch a short ad → +3 credits\n' +
+    '• Invite a friend with /share → +3 credits each',
+    earnKeyboard()
+  );
 });
 
 bot.action(/voice_lang_(.+)/, async (ctx) => {
@@ -462,31 +412,18 @@ bot.action(/imagine_size_(.+)/, async (ctx) => {
   imagineSession.delete(chatId);
 
   await ctx.answerCbQuery('Generating...');
-  await ctx.editMessageText('🎨 Generating image...');
 
   const { first_name: name, username } = ctx.chat;
   await db.upsertUser(chatId, name, username);
 
-  const userStats = await db.getUserStats(chatId);
-  const dailyUsed = userStats?.dailyUsed ?? 0;
-
-  if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
-    return await ctx.editMessageText(
-      `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
-      '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
-      { parse_mode: 'Markdown', reply_markup: {
-        inline_keyboard: [
-          [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, AI bg, images, voice & video 🚀`)],
-          [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
-        ],
-      }}
-    );
+  if (!(await db.deductCredit(chatId).catch(() => false))) {
+    return await ctx.editMessageText(NO_CREDITS_TEXT, { parse_mode: 'Markdown', reply_markup: earnKeyboard().reply_markup });
   }
 
+  await ctx.editMessageText('🎨 Generating image...').catch(() => {});
+
   const msg = ctx.callbackQuery.message;
-  const credits2 = userStats?.dailyRemaining ?? 10;
-  db.deductCredit(chatId).catch(()=>{});
-  generateImageAsync(ctx, chatId, session.prompt, userStats, credits2 - 1, msg, sizeId)
+  generateImageAsync(ctx, chatId, session.prompt, msg, sizeId)
     .catch(err => console.error('Background imagine error:', err.message));
 });
 
@@ -508,16 +445,9 @@ bot.action('ai_bg', async (ctx) => {
   await db.upsertUser(chatId, name, username);
 
   const userStats = await db.getUserStats(chatId);
-  const dailyUsed = userStats?.dailyUsed ?? 0;
-  if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
-    return await ctx.replyWithMarkdown(
-      `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
-      '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
-      Markup.inlineKeyboard([
-        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, AI bg, images, voice & video 🚀`)],
-        [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
-      ])
-    );
+  if ((userStats?.dailyRemaining ?? 10) <= 0) {
+    await ctx.answerCbQuery();
+    return await sendNoCredits(ctx);
   }
 
   await ctx.answerCbQuery();
@@ -568,18 +498,7 @@ async function processAiBackground(ctx, chatId, prompt) {
   const { first_name: name, username } = ctx.chat;
   await db.upsertUser(chatId, name, username);
 
-  const userStats = await db.getUserStats(chatId);
-  const credits = userStats?.dailyRemaining ?? 10;
-  if (credits <= 0) {
-    return await ctx.replyWithMarkdown(
-      `😅 You have *0* credits left!\n\n` +
-      '🎬 Watch ad to earn +3 credits',
-      Markup.inlineKeyboard([
-        [Markup.button.callback('🎬 Watch Ad & Earn Credits', 'earn_credits')],
-      ])
-    );
-  }
-  await db.deductCredit(chatId).catch(()=>{});
+  if (!(await takeCredit(ctx, chatId))) return;
 
   const msg = await ctx.reply('🎨 Generating AI background...');
 
@@ -605,10 +524,11 @@ async function processAiBackground(ctx, chatId, prompt) {
         },
       }
     );
-    await db.incrementUsage(chatId);
-    await db.logImage(chatId, cached.imageBuffer.length, resultBuffer.length, 'ai_bg');
+    await db.incrementUsage(chatId).catch(e => console.error('usage log failed:', e.message));
+    await db.logImage(chatId, cached.imageBuffer.length, resultBuffer.length, 'ai_bg').catch(e => console.error('usage log failed:', e.message));
   } catch (err) {
     console.error('AI BG error:', err.message);
+    await refundCredit(chatId);
     if (/failed: 429|entitlement|rate.limit/i.test(err.message || '')) {
       await ctx.telegram.sendMessage(chatId, '⚡ AI background credits are temporarily exhausted on our side. Please try again in a few minutes — background removal & upscale still work!');
     } else {
@@ -630,9 +550,8 @@ bot.action('ai_bg_retry', async (ctx) => {
   await db.upsertUser(chatId, name, username);
 
   const userStats = await db.getUserStats(chatId);
-  const dailyUsed = userStats?.dailyUsed ?? 0;
-  if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
-    return ctx.answerCbQuery('Daily limit reached!');
+  if ((userStats?.dailyRemaining ?? 10) <= 0) {
+    return ctx.answerCbQuery('No credits left! Use /help to earn more.', { show_alert: true });
   }
 
   await ctx.answerCbQuery();
@@ -658,19 +577,7 @@ async function processGeneratedImage(ctx, chatId, action) {
   const { first_name: name, username } = ctx.chat;
   await db.upsertUser(chatId, name, username);
 
-  const userStats = await db.getUserStats(chatId);
-  const dailyUsed = userStats?.dailyUsed ?? 0;
-
-  if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
-    return await ctx.replyWithMarkdown(
-      `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
-      '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
-      Markup.inlineKeyboard([
-        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, AI bg, images, voice & video 🚀`)],
-        [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
-      ])
-    );
-  }
+  if (!(await takeCredit(ctx, chatId))) return;
 
   const msg = await ctx.reply(action === 'upscale' ? '🔄 Upscaling 4x HD...' : '✂️ Removing background...');
 
@@ -683,17 +590,13 @@ async function processGeneratedImage(ctx, chatId, action) {
       resultBuffer = await getUpscale(imageBuffer);
       type = 'upscale';
       filename = 'hd-result.png';
-      label = userStats?.isPremium
-        ? '🔄 4x HD Upscale done! (Unlimited)'
-        : `🔄 4x HD Upscale done! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`;
+      label = '✨ 4x HD Upscale done!';
     } else {
       const maskBuffer = await getMask(imageBuffer);
       resultBuffer = await applyMask(imageBuffer, maskBuffer);
       type = 'bg_remove';
       filename = 'result.png';
-      label = userStats?.isPremium
-        ? '✂️ Background removed! (Unlimited)'
-        : `✂️ Background removed! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`;
+      label = '✨ Background removed!';
     }
 
     await ctx.telegram.sendDocument(
@@ -701,12 +604,13 @@ async function processGeneratedImage(ctx, chatId, action) {
       { source: resultBuffer, filename },
       { caption: label, reply_markup: resultButtons(chatId).reply_markup }
     );
-    await db.incrementUsage(chatId);
-    await db.logImage(chatId, imageBuffer.length, resultBuffer.length, type);
+    await db.incrementUsage(chatId).catch(e => console.error('usage log failed:', e.message));
+    await db.logImage(chatId, imageBuffer.length, resultBuffer.length, type).catch(e => console.error('usage log failed:', e.message));
   } catch (err) {
     console.error('=== ERROR ===');
     console.error('Message:', err.message);
-    await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Please try again later.');
+    await refundCredit(chatId);
+    await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Credit refunded.');
   } finally {
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
   }
@@ -719,65 +623,6 @@ bot.action('gen_upscale', async (ctx) => {
 bot.action('gen_bgremove', async (ctx) => {
   await processGeneratedImage(ctx, ctx.chat.id, 'bg_remove');
 });
-
-async function handleBuyPlan(ctx, plan) {
-  const chatId = ctx.chat.id;
-  const { first_name: name, username } = ctx.chat;
-  await db.upsertUser(chatId, name, username);
-
-  const pendingOrder = await db.getUserPendingOrder(chatId);
-  if (pendingOrder) {
-    await ctx.answerCbQuery().catch(() => {});
-    await ctx.replyWithMarkdown(
-      `⚠️ *You already have a pending payment!*\n\n🔖 Order: \`${pendingOrder.order_ref}\`\n\nUse /cancel to cancel it first.`
-    );
-    return;
-  }
-
-  const stats = await db.getUserStats(chatId);
-  const isPremium = stats && stats.isPremium;
-
-  const planInfo = config.PREMIUM_PLANS[plan];
-  const orderRef = generateOrderRef();
-
-  try {
-    await db.createPaymentOrder(orderRef, chatId, plan, planInfo.price);
-    pendingPayment.set(chatId, { orderRef, plan, _ts: Date.now() });
-
-    await ctx.answerCbQuery().catch(() => {});
-    await ctx.replyWithMarkdown(`✅ *Order Created!* 🔖 \`${orderRef}\``);
-
-    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=upi://pay?pa=${encodeURIComponent(config.UPI_ID)}&pn=${encodeURIComponent(config.UPI_NAME)}&am=${planInfo.price}&tn=${orderRef}`;
-
-    const caption = isPremium
-      ? `✨ *Extend ${planInfo.label} Premium — ₹${planInfo.price}* ✨\n\nYour current premium will be **extended** by ${plan === 'monthly' ? '30' : '365'} days!\n\n` +
-        `━━━━━━━━━━━━━━━━━━━\n` +
-        `📌 *HOW TO PAY:*\n\n` +
-        `1️⃣ Scan the QR above & pay ₹${planInfo.price}\n\n` +
-        `2️⃣ Send the *payment screenshot* as a 📸 PHOTO\n` +
-        `   ⚠️ Do NOT send text messages\n` +
-        `━━━━━━━━━━━━━━━━━━━\n\n` +
-        `Cancel? /cancel`
-      : `✨ *${planInfo.label} Premium — ₹${planInfo.price}* ✨\n\n` +
-        `━━━━━━━━━━━━━━━━━━━\n` +
-        `📌 *HOW TO PAY:*\n\n` +
-        `1️⃣ Scan the QR above & pay ₹${planInfo.price}\n\n` +
-        `2️⃣ Send the *payment screenshot* as a 📸 PHOTO\n` +
-        `   ⚠️ Do NOT send text messages\n` +
-        `━━━━━━━━━━━━━━━━━━━\n\n` +
-        `Cancel? /cancel`;
-
-    await ctx.replyWithPhoto(
-      qrUrl,
-      { caption, parse_mode: 'Markdown' }
-    );
-
-    const displayName = name || username || `User ${chatId}`;
-    sendNotification(`🆕 *New Payment Order*\n\n👤 ${displayName}\n💰 ${planInfo.label} — ₹${planInfo.price}\n🔖 ${orderRef}${isPremium ? '\n📌 Existing premium — will extend' : ''}`);
-  } catch (err) {
-    await ctx.replyWithMarkdown('❌ Error creating order. Please try /premium again.').catch(() => {});
-  }
-}
 
 bot.command('cancel', async (ctx) => {
   const chatId = ctx.chat.id;
@@ -861,21 +706,8 @@ setInterval(() => {
   for (const [k, v] of processedPhotos) { if (now - v > 60000) processedPhotos.delete(k); }
 }, 60000);
 
-const premiumCache = new Set();
 const banCheckCache = new Set();
 
-async function refreshPremiumCache() {
-  try {
-    const users = await db.getPremiumUsers();
-    const now = new Date();
-    premiumCache.clear();
-    users
-      .filter(u => !u.premium_until || new Date(u.premium_until) > now)
-      .forEach(u => premiumCache.add(Number(u.chat_id)));
-  } catch {}
-}
-refreshPremiumCache();
-setInterval(refreshPremiumCache, 300000);
 setInterval(() => banCheckCache.clear(), 300000);
 
 const RATE_LIMIT = 5;
@@ -909,7 +741,7 @@ function shareButton(chatId) {
   const botUsername = process.env.BOT_USERNAME || 'AiBgRemover_Bot';
   return Markup.inlineKeyboard([
     [Markup.button.switchToChat('📤 Share with Friends', `Try @${botUsername} — AI image editor bot 🚀`)],
-    [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
+    [Markup.button.callback('🎬 Watch Ad & Earn Credits', 'earn_credits')],
   ]);
 }
 
@@ -997,32 +829,21 @@ bot.on('text', async (ctx) => {
     const { first_name: name, username } = ctx.chat;
     await db.upsertUser(chatId, name, username);
 
-    const userStats = await db.getUserStats(chatId);
-    const credits = userStats?.dailyRemaining ?? 10;
-
-    if (credits <= 0) {
-      return await ctx.replyWithMarkdown(
-        `😅 You have *0* credits left!\n\n` +
-        '🎬 Watch ad to earn +3 credits',
-        Markup.inlineKeyboard([
-          [Markup.button.callback('🎬 Watch Ad & Earn Credits', 'earn_credits')],
-        ])
-      );
-    }
-    await db.deductCredit(chatId).catch(()=>{});
+    if (!(await takeCredit(ctx, chatId))) return;
 
     await ctx.reply(`🎤 Generating voice... (${text.length} chars)`);
 
     try {
       const audioBuf = await generateSpeech(session.voiceId, text, session.language);
+      const creditsLeft = await db.getCredits(chatId).catch(() => 0);
       await ctx.replyWithVoice(
         { source: audioBuf },
-        { caption: `🔊 ${session.voiceName} | Credits left: ${Math.max(0, credits - 1)}`, reply_markup: shareButton(chatId).reply_markup }
+        { caption: `🔊 ${session.voiceName} | Credits left: ${creditsLeft}`, reply_markup: shareButton(chatId).reply_markup }
       );
       voiceSession.delete(chatId);
     } catch (err) {
       console.error('voice err:', err.message);
-      await db.addCreditsBot(chatId, 1).catch(()=>{});
+      await refundCredit(chatId);
       voiceSession.delete(chatId);
       await ctx.reply('❌ Something went wrong. Credit refunded.');
     }
@@ -1042,7 +863,7 @@ bot.on('text', async (ctx) => {
   }
 });
 
-async function processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, processingMsg) {
+async function processPhotoAsync(ctx, chatId, doUpscale, processingMsg) {
   try {
     const photo = ctx.message.photo;
     const fileId = photo[photo.length - 1].file_id;
@@ -1055,7 +876,7 @@ async function processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, p
     let resultBuffer, maskBuffer;
     if (doUpscale) {
       resultBuffer = await getUpscale(imageBuffer);
-      await db.logImage(chatId, imageBuffer.length, resultBuffer.length, 'upscale');
+      await db.logImage(chatId, imageBuffer.length, resultBuffer.length, 'upscale').catch(e => console.error('usage log failed:', e.message));
         await ctx.telegram.sendDocument(
           chatId,
           { source: resultBuffer, filename: 'hd-result.png' },
@@ -1068,7 +889,7 @@ async function processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, p
     } else {
       maskBuffer = await getMask(imageBuffer);
       resultBuffer = await applyMask(imageBuffer, maskBuffer);
-      await db.logImage(chatId, imageBuffer.length, resultBuffer.length, 'bg_remove');
+      await db.logImage(chatId, imageBuffer.length, resultBuffer.length, 'bg_remove').catch(e => console.error('usage log failed:', e.message));
         await ctx.telegram.sendDocument(
           chatId,
           { source: resultBuffer },
@@ -1082,11 +903,12 @@ async function processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, p
       recentImage.set(chatId, { imageBuffer, maskBuffer, _ts: Date.now() });
     }
 
-    await db.incrementUsage(chatId);
+    await db.incrementUsage(chatId).catch(e => console.error('usage log failed:', e.message));
   } catch (err) {
     console.error('=== ERROR ===');
     console.error('Message:', err.message);
-    await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Please try again later.');
+    await refundCredit(chatId);
+    await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Credit refunded.');
   } finally {
     await ctx.telegram.deleteMessage(chatId, processingMsg.message_id).catch(() => {});
   }
@@ -1097,19 +919,17 @@ function resultButtons(chatId) {
   return Markup.inlineKeyboard([
     [Markup.button.switchToChat('📤 Share with Friends', `Try @${process.env.BOT_USERNAME || 'AiBgRemover_Bot'} — AI image editor bot 🚀`)],
     [Markup.button.callback('🎨 AI Background', 'ai_bg')],
-    [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
+    [Markup.button.callback('🎬 Watch Ad & Earn Credits', 'earn_credits')],
   ]);
 }
 
-async function generateImageAsync(ctx, chatId, text, userStats, dailyUsed, msg, size = 'SQUARE_HD') {
+async function generateImageAsync(ctx, chatId, text, msg, size = 'SQUARE_HD') {
   try {
     const imgBuf = await generateImage(text, 'ultra-realistic', size);
     const sent = await ctx.telegram.sendPhoto(
       chatId,
       { source: imgBuf },
-      { caption: userStats?.isPremium
-          ? '✨ AI Generated! (Unlimited)'
-          : `✨ AI Generated!`,
+      { caption: '✨ AI Generated!',
         reply_markup: {
           inline_keyboard: [
             [Markup.button.callback('🔄 Upscale 4x', 'gen_upscale'),
@@ -1122,24 +942,26 @@ async function generateImageAsync(ctx, chatId, text, userStats, dailyUsed, msg, 
     );
     lastGenImage.set(chatId, { buffer: imgBuf, timestamp: Date.now() });
     recentImage.set(chatId, { imageBuffer: imgBuf, _ts: Date.now() });
-    await db.incrementUsage(chatId);
-    await db.logImage(chatId, imgBuf.length, imgBuf.length, 'imagine');
+    await db.incrementUsage(chatId).catch(e => console.error('usage log failed:', e.message));
+    await db.logImage(chatId, imgBuf.length, imgBuf.length, 'imagine').catch(e => console.error('usage log failed:', e.message));
   } catch (err) {
     console.error('=== ERROR ===');
     console.error('Message:', err.message);
+    // Content-filter rejections are the user's fault (no refund); everything else is on our side
+    if (!(err instanceof ContentViolationError)) await refundCredit(chatId);
     if (err instanceof ContentViolationError) {
       await ctx.telegram.sendMessage(chatId, '🚫 Your prompt was rejected by the AI content filter. Please try a different, family-friendly description.');
     } else if (/failed: 429|entitlement|rate.limit/i.test(err.message || '')) {
       await ctx.telegram.sendMessage(chatId, '⚡ AI image credits are temporarily exhausted on our side. Please try again in a few minutes — background removal & upscale still work!');
     } else {
-      await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Please try again later.');
+      await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Credit refunded.');
     }
   } finally {
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
   }
 }
 
-async function generateVideoAsync(ctx, chatId, text, userStats, dailyUsed, msg) {
+async function generateVideoAsync(ctx, chatId, text, msg) {
   try {
     const result = await generateVideo(text);
     const res = await fetch(result.url);
@@ -1149,17 +971,16 @@ async function generateVideoAsync(ctx, chatId, text, userStats, dailyUsed, msg) 
     await ctx.telegram.sendVideo(
       chatId,
       { source: buf, filename: 'video.mp4' },
-      { caption: userStats?.isPremium
-          ? '🎬 AI Video Generated! (Unlimited)'
-          : `🎬 AI Video Generated!`,
+      { caption: '🎬 AI Video Generated!',
         reply_markup: shareButton(chatId).reply_markup }
     );
-    await db.incrementUsage(chatId);
-    await db.logImage(chatId, buf.length, buf.length, 'video');
+    await db.incrementUsage(chatId).catch(e => console.error('usage log failed:', e.message));
+    await db.logImage(chatId, buf.length, buf.length, 'video').catch(e => console.error('usage log failed:', e.message));
   } catch (err) {
     console.error('=== VIDEO ERROR ===');
     console.error('Message:', err.message);
-    await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Please try again later.');
+    await refundCredit(chatId);
+    await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Credit refunded.');
   } finally {
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
   }
@@ -1200,11 +1021,11 @@ bot.on('inline_query', async (ctx) => {
     },
     {
       type: 'article',
-      id: 'premium',
-      title: '⭐ Premium Plans',
-      description: 'Unlimited everything — ₹49/month, ₹499/year',
+      id: 'credits',
+      title: '🎬 Free Daily Credits',
+      description: '10 free credits every day — watch an ad for +3 more',
       input_message_content: {
-        message_text: '⭐ *Premium Plans*\n\n📆 Monthly — ₹49 (30 days)\n🎉 Yearly — ₹499 (365 days)\n\nUnlimited background removal, upscale, AI bg, AI generation, video & voice!\n\nType /premium in the bot to buy 👇',
+        message_text: '🎬 *Free Daily Credits*\n\nGet 10 free credits every day, and watch a short ad to earn +3 more anytime!\n\nUse background removal, upscale, AI bg, AI generation, video & voice 👇',
         parse_mode: 'Markdown',
       },
       reply_markup: {
@@ -1258,24 +1079,11 @@ async function handlePhoto(ctx) {
   const doUpscale = isUpscaleCmd || isUpscaleCaption;
   if (isUpscaleCmd) userMode.delete(chatId);
 
-  const userStats = await db.getUserStats(chatId);
-  const dailyUsed = userStats?.dailyUsed ?? 0;
-
-  if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
-    return await ctx.replyWithMarkdown(
-      `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
-      '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
-      Markup.inlineKeyboard([
-        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, AI bg, images, voice & video 🚀`)],
-        [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
-      ])
-    );
-  }
+  if (!(await takeCredit(ctx, chatId))) return;
 
   const processingMsg = await ctx.reply('⏳ Processing...');
 
-  // Fire-and-forget: process in background so handleUpdate resolves immediately
-  await processPhotoAsync(ctx, chatId, doUpscale, userStats, credits - 1, processingMsg)
+  await processPhotoAsync(ctx, chatId, doUpscale, processingMsg)
     .catch(err => console.error('Background process error:', err.message));
 }
 
@@ -1351,10 +1159,10 @@ async function startBot() {
     { command: 'upscale', description: '🔍 4x HD upscale' },
     { command: 'video', description: '🎬 AI video from text' },
     { command: 'voice', description: '🎤 Text to speech' },
-    { command: 'share', description: '🤝 Referral & earn unlimited' },
+    { command: 'share', description: '🤝 Invite friends, earn credits' },
     { command: 'stats', description: '📊 Your usage stats' },
     { command: 'support', description: '💬 Contact support' },
-    { command: 'premium', description: '⭐ Buy premium' },
+    { command: 'premium', description: '🎬 Earn free credits' },
     { command: 'cancel', description: '❌ Cancel pending operation' },
   ]).catch(() => {});
 

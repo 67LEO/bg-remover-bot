@@ -113,33 +113,76 @@ async function checkWebLimit(userIdOrAnon, res, isAnon) {
   return stats;
 }
 
+// Anti-abuse limits for ad rewards (override via env)
+const AD_DAILY_LIMIT = parseInt(process.env.AD_DAILY_LIMIT || '5');        // rewards per bot user per day
+const AD_IP_DAILY_LIMIT = parseInt(process.env.AD_IP_DAILY_LIMIT || '20'); // rewards per IP per day
+const AD_MIN_WATCH_MS = parseInt(process.env.AD_MIN_WATCH_MS || '8000');   // min time between /earn/start and /earn/claim
+const earnClaiming = new Set(); // chatIds with a claim in flight (so concurrent claims can't beat the daily cap)
+const hashOf = (s) => crypto.createHash('sha256').update(s).digest('hex').slice(0, 16);
+const LIMIT_MSG = 'Daily ad reward limit reached. Come back tomorrow, or use /share to invite friends for credits.';
+
 router.post('/earn/token', async (req, res) => {
   try {
-    const { chatId } = req.body || {};
+    const chatId = parseInt((req.body || {}).chatId);
     if (!chatId) return res.status(400).json({ error: 'chatId required' });
-    const token = crypto.randomBytes(24).toString('hex');
-    earnTokens.set(token, { chatId: parseInt(chatId), exp: Date.now() + 600000, used: false });
     const base = process.env.SITE_URL || '';
-    res.json({ token, url: base ? `${base}/earn?token=${token}` : `/earn?token=${token}` });
+    const urlFor = (t) => (base ? `${base}/earn?token=${t}` : `/earn?token=${t}`);
+
+    const { byUser } = await db.countAdRewardsToday(chatId, '');
+    if (byUser >= AD_DAILY_LIMIT) return res.status(429).json({ error: LIMIT_MSG, limitReached: true });
+
+    // One live token per user: pressing the button repeatedly must not mint unlimited tokens
+    for (const [t, v] of earnTokens) {
+      if (v.chatId === chatId && !v.used && Date.now() < v.exp) return res.json({ token: t, url: urlFor(t) });
+    }
+    const token = crypto.randomBytes(24).toString('hex');
+    earnTokens.set(token, { chatId, exp: Date.now() + 600000, used: false, startedAt: null });
+    res.json({ token, url: urlFor(token) });
   } catch {
     res.status(500).json({ error: 'Failed' });
   }
 });
 
+// Called by the Earn page right before the ad is shown; claim needs AD_MIN_WATCH_MS to have passed since this
+router.post('/earn/start', (req, res) => {
+  const { token } = req.body || {};
+  const entry = token && earnTokens.get(token);
+  if (!entry || entry.used || Date.now() > entry.exp) return res.status(400).json({ error: 'Invalid or expired token' });
+  if (!entry.startedAt) entry.startedAt = Date.now();
+  res.json({ ok: true });
+});
+
 router.post('/earn/claim', async (req, res) => {
+  let entry = null;
   try {
     const { token } = req.body || {};
     if (!token) return res.status(400).json({ error: 'token required' });
-    const entry = earnTokens.get(token);
+    entry = earnTokens.get(token);
     if (!entry || entry.used || Date.now() > entry.exp) return res.status(400).json({ error: 'Invalid or expired token' });
-    entry.used = true;
-    earnTokens.set(token, entry);
+    if (!entry.startedAt || Date.now() - entry.startedAt < AD_MIN_WATCH_MS) {
+      return res.status(400).json({ error: 'Ad not completed. No credits added.' });
+    }
+    if (earnClaiming.has(entry.chatId)) return res.status(429).json({ error: 'Another claim is in progress. Try again.' });
+
     const ip = req.ip || req.socket.remoteAddress || '';
-    const ua = req.headers['user-agent'] || '';
-    const ipHash = crypto.createHash('sha256').update(ip).digest('hex').slice(0, 16);
-    const uaHash = crypto.createHash('sha256').update(ua).digest('hex').slice(0, 16);
-    await db.addCreditsBot(entry.chatId, 3);
-    await db.logAdReward({ user_type: 'bot', user_id: entry.chatId, credits_given: 3, ip_hash: ipHash, user_agent_hash: uaHash });
+    const ipHash = hashOf(ip);
+    const uaHash = hashOf(req.headers['user-agent'] || '');
+
+    earnClaiming.add(entry.chatId);
+    entry.used = true; // burn first so the same token can't be claimed twice concurrently
+    try {
+      const { byUser, byIp } = await db.countAdRewardsToday(entry.chatId, ipHash);
+      if (byUser >= AD_DAILY_LIMIT || byIp >= AD_IP_DAILY_LIMIT) {
+        return res.status(429).json({ error: LIMIT_MSG, limitReached: true });
+      }
+      await db.addCreditsBot(entry.chatId, 3);
+      await db.logAdReward({ user_type: 'bot', user_id: entry.chatId, credits_given: 3, ip_hash: ipHash, user_agent_hash: uaHash });
+    } catch (err) {
+      entry.used = false; // DB failure: don't burn the user's token
+      throw err;
+    } finally {
+      earnClaiming.delete(entry.chatId);
+    }
     res.json({ ok: true, credits: 3, message: '+3 credits added!' });
   } catch {
     res.status(500).json({ error: 'Failed' });

@@ -170,10 +170,11 @@ async function logImage(chatId, originalSize, resultSize, type = 'bg_remove') {
 }
 
 async function addReferral(referrerId, refereeId) {
-  await query(
+  const r = await query(
     'INSERT INTO referrals (referrer_id, referee_id) VALUES ($1, $2) ON CONFLICT (referee_id) DO NOTHING',
     [referrerId, refereeId]
   );
+  return r.rowCount > 0; // true only for a brand-new referral
 }
 
 async function getReferralCount(chatId) {
@@ -190,13 +191,17 @@ async function checkPremiumExpiry(user) {
 }
 
 async function ensureCredits(chatId) {
-  const r = await query('SELECT credits, last_credit_reset FROM users WHERE chat_id = $1', [chatId]);
+  // last_credit_reset is cast to text: node-pg returns DATE as a JS Date, which never === a 'YYYY-MM-DD' string
+  const r = await query('SELECT credits, last_credit_reset::text AS last_credit_reset FROM users WHERE chat_id = $1', [chatId]);
   if (r.rows.length === 0) return 10;
   const row = r.rows[0];
   const today = new Date().toISOString().slice(0, 10);
   if (row.last_credit_reset !== today) {
-    await query("UPDATE users SET credits = 10, last_credit_reset = $1 WHERE chat_id = $2", [today, chatId]);
-    return 10;
+    // Guarded so concurrent callers on a new day reset once and don't restore already-spent credits
+    const u = await query("UPDATE users SET credits = 10, last_credit_reset = $1::date WHERE chat_id = $2 AND last_credit_reset IS DISTINCT FROM $1::date RETURNING credits", [today, chatId]);
+    if (u.rowCount > 0) return 10;
+    const again = await query('SELECT credits FROM users WHERE chat_id = $1', [chatId]);
+    return again.rows[0]?.credits ?? 10;
   }
   return row.credits === null ? 10 : row.credits;
 }
@@ -206,14 +211,15 @@ async function getCredits(chatId) {
 }
 
 async function deductCredit(chatId) {
-  const c = await ensureCredits(chatId);
-  if (c <= 0) return false;
-  await query('UPDATE users SET credits = credits - 1 WHERE chat_id = $1', [chatId]);
-  return true;
+  await ensureCredits(chatId);
+  // Atomic: only decrements when credits remain, so concurrent requests can't go negative
+  const r = await query('UPDATE users SET credits = credits - 1 WHERE chat_id = $1 AND credits > 0', [chatId]);
+  return r.rowCount > 0;
 }
 
 async function addCreditsBot(chatId, amount) {
   const today = new Date().toISOString().slice(0, 10);
+  await ensureCredits(chatId); // roll over the daily reset first so a later reset doesn't wipe this top-up
   await query('INSERT INTO users (chat_id, credits, last_credit_reset) VALUES ($1, $2, $3) ON CONFLICT (chat_id) DO UPDATE SET credits = COALESCE(users.credits, 0) + $2', [chatId, amount, today]);
 }
 
@@ -221,6 +227,18 @@ async function logAdReward(data) {
   await query('INSERT INTO ad_rewards (user_type, user_id, web_user_id, credits_given, ip_hash, user_agent_hash) VALUES ($1,$2,$3,$4,$5,$6)', [
     data.user_type || 'bot', data.user_id || null, data.web_user_id || null, data.credits_given || 3, data.ip_hash || null, data.user_agent_hash || null
   ]);
+}
+
+// Ad rewards granted today (DB date) to this bot user and from this IP hash — used to cap /api/earn/claim
+async function countAdRewardsToday(chatId, ipHash) {
+  const r = await query(
+    `SELECT
+       COUNT(*) FILTER (WHERE user_type = 'bot' AND user_id = $1) AS by_user,
+       COUNT(*) FILTER (WHERE ip_hash = $2) AS by_ip
+     FROM ad_rewards WHERE created_at::date = CURRENT_DATE`,
+    [chatId, ipHash || '']
+  );
+  return { byUser: parseInt(r.rows[0].by_user || '0'), byIp: parseInt(r.rows[0].by_ip || '0') };
 }
 
 async function getUserStats(chatId) {
@@ -894,5 +912,5 @@ module.exports = {
   findWebUserByGoogleId, updateWebUserLogin, getWebUsage,
   incrementWebUsage, getWebUserStats,
   getAnonUsage, incrementAnonUsage,
-  ensureCredits, getCredits, deductCredit, addCreditsBot, logAdReward,
+  ensureCredits, getCredits, deductCredit, addCreditsBot, logAdReward, countAdRewardsToday,
 };
