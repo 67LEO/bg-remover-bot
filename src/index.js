@@ -286,7 +286,9 @@ bot.command('video', async (ctx) => {
 
   const msg = await ctx.reply('🎬 Generating AI video... (1-2 min)');
 
-  generateVideoAsync(ctx, chatId, text, userStats, dailyUsed, msg)
+  const credits2 = userStats?.dailyRemaining ?? 10;
+  db.deductCredit(chatId).catch(()=>{});
+  generateVideoAsync(ctx, chatId, text, userStats, credits2 - 1, msg)
     .catch(err => console.error('Background video error:', err.message));
 });
 
@@ -482,7 +484,9 @@ bot.action(/imagine_size_(.+)/, async (ctx) => {
   }
 
   const msg = ctx.callbackQuery.message;
-  generateImageAsync(ctx, chatId, session.prompt, userStats, dailyUsed, msg, sizeId)
+  const credits2 = userStats?.dailyRemaining ?? 10;
+  db.deductCredit(chatId).catch(()=>{});
+  generateImageAsync(ctx, chatId, session.prompt, userStats, credits2 - 1, msg, sizeId)
     .catch(err => console.error('Background imagine error:', err.message));
 });
 
@@ -565,17 +569,17 @@ async function processAiBackground(ctx, chatId, prompt) {
   await db.upsertUser(chatId, name, username);
 
   const userStats = await db.getUserStats(chatId);
-  const dailyUsed = userStats?.dailyUsed ?? 0;
-  if (!userStats?.isPremium && dailyUsed >= config.FREE_LIMIT_DAILY) {
+  const credits = userStats?.dailyRemaining ?? 10;
+  if (credits <= 0) {
     return await ctx.replyWithMarkdown(
-      `😅 You've used all *${config.FREE_LIMIT_DAILY}* free tries today!\n\n` +
-      '🔹 Type /share to earn unlimited\n🔹 Or go premium for unlimited access',
+      `😅 You have *0* credits left!\n\n` +
+      '🎬 Watch ad to earn +3 credits',
       Markup.inlineKeyboard([
-        [Markup.button.switchToChat('📤 Share with Friends', `Try AI Image Editor Bot — remove bg, upscale, AI bg, images, voice & video 🚀`)],
-        [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
+        [Markup.button.callback('🎬 Watch Ad & Earn Credits', 'earn_credits')],
       ])
     );
   }
+  await db.deductCredit(chatId).catch(()=>{});
 
   const msg = await ctx.reply('🎨 Generating AI background...');
 
@@ -593,13 +597,10 @@ async function processAiBackground(ctx, chatId, prompt) {
       chatId,
       { source: resultBuffer, filename: 'ai-bg-result.jpg' },
       {
-        caption: userStats?.isPremium
-          ? '🎨 Background replaced! (Unlimited)'
-          : `🎨 Background replaced! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`,
+        caption: '🎨 Background replaced!',
         reply_markup: {
           inline_keyboard: [
             [Markup.button.callback('🔄 Try Again', 'ai_bg_retry'), Markup.button.callback('✏️ New Prompt', 'ai_bg_custom')],
-            [Markup.button.callback('⭐ Go Premium', 'buy_monthly')],
           ],
         },
       }
@@ -1055,16 +1056,14 @@ async function processPhotoAsync(ctx, chatId, doUpscale, userStats, dailyUsed, p
     if (doUpscale) {
       resultBuffer = await getUpscale(imageBuffer);
       await db.logImage(chatId, imageBuffer.length, resultBuffer.length, 'upscale');
-      await ctx.telegram.sendDocument(
-        chatId,
-        { source: resultBuffer, filename: 'hd-result.png' },
-        {
-          caption: userStats?.isPremium
-            ? '✨ 4x HD Upscale done! (Unlimited)'
-            : `✨ 4x HD Upscale done! (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`,
-          reply_markup: resultButtons(chatId).reply_markup,
-        }
-      );
+        await ctx.telegram.sendDocument(
+          chatId,
+          { source: resultBuffer, filename: 'hd-result.png' },
+          {
+            caption: '✨ 4x HD Upscale done!',
+            reply_markup: resultButtons(chatId).reply_markup,
+          }
+        );
       recentImage.set(chatId, { imageBuffer, _ts: Date.now() });
     } else {
       maskBuffer = await getMask(imageBuffer);
