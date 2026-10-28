@@ -1253,13 +1253,6 @@ async function handlePhoto(ctx) {
     return;
   }
 
-  const dbOrder = await db.getUserPendingOrder(chatId);
-  if (dbOrder) {
-    pendingPayment.set(chatId, { orderRef: dbOrder.order_ref, plan: dbOrder.plan, _ts: Date.now() });
-    await handlePaymentScreenshot(ctx, chatId, name, username, { orderRef: dbOrder.order_ref, plan: dbOrder.plan }, maxPhoto.file_id);
-    return;
-  }
-
   const caption = ctx.message.caption || '';
   const userModeEntry = userMode.get(chatId);
   const isUpscaleCmd = userModeEntry?.mode === 'upscale';
