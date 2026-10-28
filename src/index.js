@@ -996,35 +996,34 @@ bot.on('text', async (ctx) => {
     const { first_name: name, username } = ctx.chat;
     await db.upsertUser(chatId, name, username);
 
-  const userStats = await db.getUserStats(chatId);
-  const credits = userStats?.dailyRemaining ?? 10;
+    const userStats = await db.getUserStats(chatId);
+    const credits = userStats?.dailyRemaining ?? 10;
 
-  if (credits <= 0) {
-    return await ctx.replyWithMarkdown(
-      `😅 You have *0* credits left!\n\n` +
-      '🎬 Watch ad to earn +3 credits',
-      Markup.inlineKeyboard([
-        [Markup.button.callback('🎬 Watch Ad & Earn Credits', 'earn_credits')],
-      ])
-    );
-  }
-  await db.deductCredit(chatId).catch(()=>{});
+    if (credits <= 0) {
+      return await ctx.replyWithMarkdown(
+        `😅 You have *0* credits left!\n\n` +
+        '🎬 Watch ad to earn +3 credits',
+        Markup.inlineKeyboard([
+          [Markup.button.callback('🎬 Watch Ad & Earn Credits', 'earn_credits')],
+        ])
+      );
+    }
+    await db.deductCredit(chatId).catch(()=>{});
 
     await ctx.reply(`🎤 Generating voice... (${text.length} chars)`);
 
     try {
       const audioBuf = await generateSpeech(session.voiceId, text, session.language);
-      await db.incrementUsage(chatId);
       await ctx.replyWithVoice(
         { source: audioBuf },
-        { caption: userStats?.isPremium
-          ? `🔊 ${session.voiceName} (Unlimited)`
-          : `🔊 ${session.voiceName} (${dailyUsed + 1}/${config.FREE_LIMIT_DAILY} free today)`,
-          reply_markup: shareButton(chatId).reply_markup }
+        { caption: `🔊 ${session.voiceName} | Credits left: ${Math.max(0, credits - 1)}`, reply_markup: shareButton(chatId).reply_markup }
       );
       voiceSession.delete(chatId);
     } catch (err) {
-      await ctx.reply('❌ Something went wrong. Please try again later.');
+      console.error('voice err:', err.message);
+      await db.addCreditsBot(chatId, 1).catch(()=>{});
+      voiceSession.delete(chatId);
+      await ctx.reply('❌ Something went wrong. Credit refunded.');
     }
     return;
   }
