@@ -62,27 +62,35 @@ async function takeCredit(ctx, chatId) {
   return ok;
 }
 
-// Logs a feature failure with its stack and DMs the real error to the admin (once per 10 min per message),
-// because users only ever see the generic "Something went wrong".
+// Logs a feature failure with its stack and DMs the real error (with the user's id) to the admin.
+// Users never see the technical error; they only get the neutral softFail note.
 const lastErrorReport = new Map();
 let errorBurst = { start: 0, sent: 0 };
 function reportError(where, err, chatId) {
   // Node's fetch hides the real network reason (ECONNREFUSED, ETIMEDOUT, ...) in err.cause
   const cause = err && err.cause ? ` (${err.cause.code || err.cause.message || err.cause})` : '';
   const msg = `${where}: ${String((err && err.message) || err).replace(/\s+/g, ' ').slice(0, 300)}${String(cause).slice(0, 80)}`;
-  console.error(`[${where}] user ${chatId}`, err && err.stack ? err.stack.split('\n').slice(0, 4).join(' | ') : msg);
+  console.error(`[${where}] user ${chatId ?? 'n/a'}`, err && err.stack ? err.stack.split('\n').slice(0, 4).join(' | ') : msg);
   if (!config.ADMIN_CHAT_ID) return;
   const now = Date.now();
   // Every failure a user sees is sent to the admin. Only a user repeating the very same error within 30s is skipped,
   // and a hard cap (30 DMs / 10 min) keeps an outage from flooding the chat.
-  const key = `${chatId}|${msg.slice(0, 100)}`;
+  const key = `${chatId ?? 'n/a'}|${msg.slice(0, 100)}`;
   if (now - (lastErrorReport.get(key) || 0) < 30000) return;
   if (now - errorBurst.start > 10 * 60 * 1000) errorBurst = { start: now, sent: 0 };
   if (errorBurst.sent >= 30) return;
   errorBurst.sent++;
   if (lastErrorReport.size > 500) lastErrorReport.clear();
   lastErrorReport.set(key, now);
-  bot.telegram.sendMessage(config.ADMIN_CHAT_ID, `⚠️ Feature failed — user ${chatId}\n${msg}\n(user was told: something went wrong, credit refunded)`).catch(() => {});
+  // Arrives in the admin bot; the main bot is only the fallback if the admin bot is not set up
+  const toAdmin = (t) => (adminBot ? adminBot.telegram.sendMessage(config.ADMIN_CHAT_ID, t).catch(() => bot.telegram.sendMessage(config.ADMIN_CHAT_ID, t)) : bot.telegram.sendMessage(config.ADMIN_CHAT_ID, t));
+  toAdmin(`⚠️ Feature failed — user ${chatId ?? 'n/a'}\n${msg}\n(the user only saw a neutral "try again" note; credit refunded where it was charged)`).catch(() => {});
+}
+
+// Users never see a technical error. The real error goes to the admin (reportError) and the user gets this neutral note.
+const SOFT_FAIL_TEXT = '⏳ This is taking longer than usual. Please try again in a minute — your credit is safe.';
+function softFail(ctx, chatId) {
+  return ctx.telegram.sendMessage(chatId, SOFT_FAIL_TEXT).catch(() => {});
 }
 
 function refundCredit(chatId) {
@@ -130,8 +138,8 @@ bot.action('earn_credits', async (ctx) => {
       await ctx.reply(intro + (ad.text_html || ''), { ...extra, link_preview_options: { is_disabled: true } });
     }
   } catch (e) {
-    console.error('earn_credits failed:', e.message);
-    await ctx.reply('Ad is unavailable right now. Please try again in a minute.').catch(() => {});
+    reportError('earn-button', e, chatId);
+    await ctx.reply('🎬 No video is ready right now. Please try again in a few minutes.').catch(() => {});
   }
 });
 
@@ -280,22 +288,12 @@ bot.command('imagine', async (ctx) => {
     );
   }
 
-  if ((userStats?.dailyRemaining ?? 10) <= 0) return await sendNoCredits(ctx);
+  // Square is the only size Photoroom serves to free accounts, so there is no size choice: generate right away
+  if (!(await takeCredit(ctx, chatId))) return;
 
-  imagineSession.set(chatId, { prompt: text, _ts: Date.now() });
-  await ctx.reply(
-    `🎨 Choose aspect ratio for:\n"${text.length > 50 ? text.substring(0, 50) + '...' : text}" 👇`,
-    {
-      reply_markup: {
-        inline_keyboard: [
-          [Markup.button.callback('⬛ Square 1:1', 'imagine_size_SQUARE_HD')],
-          [Markup.button.callback('📱 Portrait 3:2', 'imagine_size_PORTRAIT_3_2')],
-          [Markup.button.callback('📐 Portrait 4:3', 'imagine_size_PORTRAIT_4_3')],
-          [Markup.button.callback('❌ Cancel', 'imagine_cancel')],
-        ],
-      },
-    }
-  );
+  const msg = await ctx.reply('🎨 Generating your image...');
+  generateImageAsync(ctx, chatId, text, msg)
+    .catch(err => console.error('Background imagine error:', err.message));
 });
 
 bot.command('video', async (ctx) => {
@@ -373,7 +371,8 @@ bot.command('support', async (ctx) => {
     const displayName = name || username || `User ${chatId}`;
     sendNotification(`📩 *Support Message — Ticket #${ticketId}*\n\n👤 ${displayName}\n💬 \`${text.substring(0, 200)}\``);
   } catch (err) {
-    await ctx.reply('❌ Error submitting ticket. Please try again later.');
+    reportError('support-ticket', err, chatId);
+    await softFail(ctx, chatId);
   }
 });
 
@@ -413,7 +412,8 @@ bot.action(/voice_lang_(.+)/, async (ctx) => {
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } }
     );
   } catch (err) {
-    await ctx.editMessageText('❌ Error fetching voices. Please try again later.');
+    reportError('voice-list', err, chatId);
+    await ctx.editMessageText(SOFT_FAIL_TEXT).catch(() => {});
   }
 });
 
@@ -429,8 +429,9 @@ bot.action(/voice_preview_(.+)/, async (ctx) => {
     if (!res.ok) throw new Error('Download failed');
     const buf = Buffer.from(await res.arrayBuffer());
     await ctx.replyWithVoice({ source: buf }, { caption: `🎧 ${voice.name} — preview`, reply_to_message_id: ctx.callbackQuery.message.message_id });
-  } catch {
-    await ctx.reply('❌ Could not load preview.');
+  } catch (e) {
+    reportError('voice-preview', e, ctx.chat.id);
+    await softFail(ctx, chatId);
   }
 });
 
@@ -450,37 +451,6 @@ bot.action(/voice_select_(.+)/, async (ctx) => {
     `✅ Voice selected: *${voiceName}*\n\nNow send me the text you want to convert to speech 🎤`,
     { parse_mode: 'Markdown' }
   );
-});
-
-bot.action(/imagine_size_(.+)/, async (ctx) => {
-  const chatId = ctx.chat.id;
-  const sizeId = ctx.match[1];
-  const session = imagineSession.get(chatId);
-  if (!session?.prompt) return ctx.answerCbQuery('Session expired. Use /imagine again.');
-
-  imagineSession.delete(chatId);
-
-  await ctx.answerCbQuery('Generating...');
-
-  const { first_name: name, username } = ctx.chat;
-  await db.upsertUser(chatId, name, username);
-
-  if (!(await db.deductCredit(chatId).catch(() => false))) {
-    return await ctx.editMessageText(NO_CREDITS_TEXT, { parse_mode: 'Markdown', reply_markup: earnKeyboard().reply_markup });
-  }
-
-  await ctx.editMessageText('🎨 Generating image...').catch(() => {});
-
-  const msg = ctx.callbackQuery.message;
-  generateImageAsync(ctx, chatId, session.prompt, msg, sizeId)
-    .catch(err => console.error('Background imagine error:', err.message));
-});
-
-bot.action('imagine_cancel', async (ctx) => {
-  const chatId = ctx.chat.id;
-  imagineSession.delete(chatId);
-  await ctx.answerCbQuery('Cancelled');
-  await ctx.editMessageText('❌ Cancelled. Use /imagine to try again.');
 });
 
 bot.action('ai_bg', async (ctx) => {
@@ -579,11 +549,7 @@ async function processAiBackground(ctx, chatId, prompt) {
     console.error('AI BG error:', err.message);
     reportError('ai-background', err, chatId);
     await refundCredit(chatId);
-    if (/failed: 429|entitlement|rate.limit/i.test(err.message || '')) {
-      await ctx.telegram.sendMessage(chatId, '⚡ AI background credits are busy right now. Your credit was refunded — please try again in a minute.');
-    } else {
-      await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Please try again later.');
-    }
+    await softFail(ctx, chatId);
   } finally {
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
   }
@@ -661,7 +627,7 @@ async function processGeneratedImage(ctx, chatId, action) {
     console.error('Message:', err.message);
     reportError('bg-remove/upscale (generated image)', err, chatId);
     await refundCredit(chatId);
-    await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Credit refunded.');
+    await softFail(ctx, chatId);
   } finally {
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
   }
@@ -707,11 +673,6 @@ bot.command('cancel', async (ctx) => {
     await ctx.reply('✅ Voice generation cancelled. Use /voice to start again.');
     return;
   }
-  if (imagineSession.has(chatId)) {
-    imagineSession.delete(chatId);
-    await ctx.reply('✅ Image generation cancelled. Use /imagine to start again.');
-    return;
-  }
   if (aiBgSession.has(chatId)) {
     aiBgSession.delete(chatId);
     await ctx.reply('✅ AI background cancelled. Send a photo to try again.');
@@ -723,7 +684,6 @@ bot.command('cancel', async (ctx) => {
 const userMode = new Map();
 const pendingPayment = new Map();
 const voiceSession = new Map();
-const imagineSession = new Map();
 const lastGenImage = new Map();
 const aiBgSession = new Map();
 const recentImage = new Map();
@@ -748,7 +708,6 @@ setInterval(() => {
     }
   }
   for (const [k, v] of voiceSession) { if (now - (v._ts || 0) > SESSION_TTL) voiceSession.delete(k); }
-  for (const [k, v] of imagineSession) { if (now - (v._ts || 0) > SESSION_TTL) imagineSession.delete(k); }
   for (const [k, v] of lastGenImage) { if (now - (v.timestamp || 0) > SESSION_TTL) lastGenImage.delete(k); }
   for (const [k, v] of aiBgSession) { if (now - (v._ts || 0) > SESSION_TTL) aiBgSession.delete(k); }
   for (const [k, v] of recentImage) { if (now - (v._ts || 0) > SESSION_TTL) recentImage.delete(k); }
@@ -897,7 +856,7 @@ bot.on('text', async (ctx) => {
       reportError('voice', err, chatId);
       await refundCredit(chatId);
       voiceSession.delete(chatId);
-      await ctx.reply('❌ Something went wrong. Credit refunded.');
+      await softFail(ctx, chatId);
     }
     return;
   }
@@ -961,7 +920,7 @@ async function processPhotoAsync(ctx, chatId, doUpscale, processingMsg) {
     console.error('Message:', err.message);
     reportError('photo', err, chatId);
     await refundCredit(chatId);
-    await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Credit refunded.');
+    await softFail(ctx, chatId);
   } finally {
     await ctx.telegram.deleteMessage(chatId, processingMsg.message_id).catch(() => {});
   }
@@ -1000,15 +959,14 @@ async function generateImageAsync(ctx, chatId, text, msg, size = 'SQUARE_HD') {
   } catch (err) {
     console.error('=== ERROR ===');
     console.error('Message:', err.message);
-    reportError('imagine', err, chatId);
+    if (!(err instanceof ContentViolationError)) reportError('imagine', err, chatId); // a rejected prompt is the user's input, not a fault
     // Content-filter rejections are the user's fault (no refund); everything else is on our side
     if (!(err instanceof ContentViolationError)) await refundCredit(chatId);
     if (err instanceof ContentViolationError) {
-      await ctx.telegram.sendMessage(chatId, '🚫 Your prompt was rejected by the AI content filter. Please try a different, family-friendly description.');
-    } else if (/failed: 429|entitlement|rate.limit/i.test(err.message || '')) {
-      await ctx.telegram.sendMessage(chatId, '⚡ AI image credits are busy right now. Your credit was refunded — please try again in a minute.');
+      // About the user's own prompt (not a system problem), so they are told how to fix it
+      await ctx.telegram.sendMessage(chatId, '🚫 That prompt isn\'t allowed. Please try a different, family-friendly description.');
     } else {
-      await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Credit refunded.');
+      await softFail(ctx, chatId);
     }
   } finally {
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
@@ -1035,7 +993,7 @@ async function generateVideoAsync(ctx, chatId, text, msg) {
     console.error('Message:', err.message);
     reportError('video', err, chatId);
     await refundCredit(chatId);
-    await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Credit refunded.');
+    await softFail(ctx, chatId);
   } finally {
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
   }
@@ -1201,9 +1159,9 @@ const server = http.createServer((req, res) => {
       res.writeHead(200);
       res.end('OK');
       if (req.url === '/admin-webhook' && adminBot) {
-        handleWithTimeout(adminBot, json).catch(e => console.error('Admin webhook error:', e.message));
+        handleWithTimeout(adminBot, json).catch(e => { console.error('Admin webhook error:', e.message); });
       } else if (req.url === '/webhook') {
-        handleWithTimeout(bot, json).catch(e => console.error('Main webhook error:', e.message));
+        handleWithTimeout(bot, json).catch(e => { console.error('Main webhook error:', e.message); reportError('webhook', e); });
       }
     });
     return;

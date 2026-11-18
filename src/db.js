@@ -681,16 +681,15 @@ async function getExpiringPremium(daysAhead) {
 }
 
 async function getDailyReport() {
+  // "Yesterday" is the previous calendar day in India time (the report goes out at 8 AM IST); the database clock is UTC
   const r = await query(
     `SELECT
-      (SELECT COUNT(*) FROM users WHERE joined_at::date = CURRENT_DATE - 1) AS new_users,
-      (SELECT COUNT(*) FROM images WHERE created_at::date = CURRENT_DATE - 1) AS ops,
-      (SELECT COUNT(DISTINCT chat_id) FROM daily_usage WHERE date = CURRENT_DATE - 1) AS active_users,
-      (SELECT COUNT(*) FROM payment_orders WHERE status = 'confirmed' AND confirmed_at::date = CURRENT_DATE - 1) AS confirmed_orders,
-      (SELECT COALESCE(SUM(amount),0) FROM payment_orders WHERE status = 'confirmed' AND confirmed_at::date = CURRENT_DATE - 1) AS revenue,
-      (SELECT COUNT(*) FROM payment_orders WHERE status = 'pending' AND screenshot_file_id IS NOT NULL) AS pending_reviews,
-      (SELECT COUNT(*) FROM support_tickets WHERE created_at::date = CURRENT_DATE - 1) AS new_tickets
-    `
+      (SELECT COUNT(*) FROM users, y WHERE (joined_at AT TIME ZONE 'Asia/Kolkata')::date = y.d) AS new_users,
+      (SELECT COUNT(*) FROM images, y WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = y.d) AS ops,
+      (SELECT COUNT(DISTINCT chat_id) FROM images, y WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = y.d) AS active_users,
+      (SELECT COUNT(*) FROM ad_rewards, y WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = y.d) AS ad_rewards,
+      (SELECT COUNT(*) FROM support_tickets, y WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = y.d) AS new_tickets
+    `.replace('SELECT\n', "WITH y AS (SELECT ((NOW() AT TIME ZONE 'Asia/Kolkata')::date - 1) AS d)\n    SELECT\n")
   );
   return r.rows[0] || null;
 }
