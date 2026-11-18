@@ -59,6 +59,22 @@ async function takeCredit(ctx, chatId) {
   return ok;
 }
 
+// Logs a feature failure with its stack and DMs the real error to the admin (once per 10 min per message),
+// because users only ever see the generic "Something went wrong".
+const lastErrorReport = new Map();
+function reportError(where, err) {
+  // Node's fetch hides the real network reason (ECONNREFUSED, ETIMEDOUT, ...) in err.cause
+  const cause = err && err.cause ? ` (${err.cause.code || err.cause.message || err.cause})` : '';
+  const msg = `${where}: ${String((err && err.message) || err).replace(/\s+/g, ' ').slice(0, 300)}${String(cause).slice(0, 80)}`;
+  console.error(`[${where}]`, err && err.stack ? err.stack.split('\n').slice(0, 4).join(' | ') : msg);
+  if (!config.ADMIN_CHAT_ID) return;
+  const key = msg.slice(0, 120), now = Date.now();
+  if (now - (lastErrorReport.get(key) || 0) < 10 * 60 * 1000) return;
+  if (lastErrorReport.size > 200) lastErrorReport.clear();
+  lastErrorReport.set(key, now);
+  bot.telegram.sendMessage(config.ADMIN_CHAT_ID, `⚠️ Feature failed — ${msg}`).catch(() => {});
+}
+
 function refundCredit(chatId) {
   return db.addCreditsBot(chatId, 1).catch(err => console.error('Credit refund failed:', err.message));
 }
@@ -551,6 +567,7 @@ async function processAiBackground(ctx, chatId, prompt) {
     await db.logImage(chatId, cached.imageBuffer.length, resultBuffer.length, 'ai_bg').catch(e => console.error('usage log failed:', e.message));
   } catch (err) {
     console.error('AI BG error:', err.message);
+    reportError('ai-background', err);
     await refundCredit(chatId);
     if (/failed: 429|entitlement|rate.limit/i.test(err.message || '')) {
       await ctx.telegram.sendMessage(chatId, '⚡ AI background credits are temporarily exhausted on our side. Please try again in a few minutes — background removal & upscale still work!');
@@ -632,6 +649,7 @@ async function processGeneratedImage(ctx, chatId, action) {
   } catch (err) {
     console.error('=== ERROR ===');
     console.error('Message:', err.message);
+    reportError('bg-remove/upscale (generated image)', err);
     await refundCredit(chatId);
     await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Credit refunded.');
   } finally {
@@ -866,6 +884,7 @@ bot.on('text', async (ctx) => {
       voiceSession.delete(chatId);
     } catch (err) {
       console.error('voice err:', err.message);
+      reportError('voice', err);
       await refundCredit(chatId);
       voiceSession.delete(chatId);
       await ctx.reply('❌ Something went wrong. Credit refunded.');
@@ -930,6 +949,7 @@ async function processPhotoAsync(ctx, chatId, doUpscale, processingMsg) {
   } catch (err) {
     console.error('=== ERROR ===');
     console.error('Message:', err.message);
+    reportError('photo', err);
     await refundCredit(chatId);
     await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Credit refunded.');
   } finally {
@@ -970,6 +990,7 @@ async function generateImageAsync(ctx, chatId, text, msg, size = 'SQUARE_HD') {
   } catch (err) {
     console.error('=== ERROR ===');
     console.error('Message:', err.message);
+    reportError('imagine', err);
     // Content-filter rejections are the user's fault (no refund); everything else is on our side
     if (!(err instanceof ContentViolationError)) await refundCredit(chatId);
     if (err instanceof ContentViolationError) {
@@ -1002,6 +1023,7 @@ async function generateVideoAsync(ctx, chatId, text, msg) {
   } catch (err) {
     console.error('=== VIDEO ERROR ===');
     console.error('Message:', err.message);
+    reportError('video', err);
     await refundCredit(chatId);
     await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Credit refunded.');
   } finally {
