@@ -46,14 +46,17 @@ async function withRetry(fn) {
     if (!retryable) throw err;
 
     const isEntitlement = isEntitlementError(msg);
-    const attempts = isEntitlement ? MAX_ROTATIONS : 1;
+    // 429 = temporary per-account rate limit: worth many fresh accounts.
+    // 403 "requires Pro" = a feature/size gated for free accounts (measured: PORTRAIT sizes) - one fresh account is
+    // enough to rule out a single blocked account; more would only burn Firebase sign-ups.
+    const attempts = msg.includes('failed: 429') ? MAX_ROTATIONS : 1;
     let lastErr = err;
     let lastMsg = msg;
     for (let i = 0; i < attempts; i++) {
       console.warn(`[api] Token rotation (${i + 1}/${attempts})${isEntitlement ? ' [entitlement]' : ''}: ${lastMsg.slice(0, 100)}`);
       // 429 = temporary rate limit (cool-down, reusable later); 403 entitlement = this account is blocked (discard).
       // After the first rotation go straight to brand-new accounts: pooled ones may be blocked the same way.
-      await rotateToken(lastMsg.includes('failed: 429'), { fresh: isEntitlement && i > 0 });
+      await rotateToken(lastMsg.includes('failed: 429'), { fresh: isEntitlement && (i > 0 || lastMsg.includes('failed: 403')) });
       await appStartup();
       const freshToken = await ensureAuth();
       try {
@@ -174,14 +177,37 @@ async function getMask(imageBuffer) {
   });
 }
 
-async function generateImage(prompt, style = 'ultra-realistic', size = 'SQUARE_HD') {
+// Photoroom only serves SQUARE_HD to free accounts: every other sizeId (SQUARE, PORTRAIT_*, LANDSCAPE_*) answers
+// 403 "entitlement-blocked: requires Pro" (measured Nov 2026). Other ratios are therefore made by generating the
+// free square image and cropping it to the requested ratio.
+const FREE_SIZE = 'SQUARE_HD';
+const CROP_RATIO = {
+  PORTRAIT_3_2: [2, 3], PORTRAIT_4_3: [3, 4], PORTRAIT_16_9: [9, 16],
+  LANDSCAPE_3_2: [3, 2], LANDSCAPE_4_3: [4, 3], LANDSCAPE_16_9: [16, 9],
+};
+
+async function cropToRatio(buf, rw, rh) {
+  const { width, height } = await sharp(buf).metadata();
+  let w = width, h = height;
+  // largest rw:rh rectangle that fits inside the image
+  if (w * rh > h * rw) w = Math.round(h * rw / rh); else h = Math.round(w * rh / rw);
+  return sharp(buf).resize(w, h, { fit: 'cover', position: sharp.strategy.attention }).jpeg({ quality: 92 }).toBuffer();
+}
+
+async function generateImage(prompt, style = 'ultra-realistic', size = FREE_SIZE) {
+  const square = await generateSquareImage(prompt, style);
+  const ratio = CROP_RATIO[size];
+  return ratio ? cropToRatio(square, ratio[0], ratio[1]) : square;
+}
+
+async function generateSquareImage(prompt, style = 'ultra-realistic') {
   return apiSem.run(async () => {
     return withRetry(async ({ idToken }) => {
       const body = {
         userPrompt: prompt,
         appId: 'expert',
         styleId: style,
-        sizeId: size,
+        sizeId: FREE_SIZE,
         numberOfImages: 1,
       };
 
@@ -281,4 +307,4 @@ async function getAiBackground(imageBuffer, maskBuffer, prompt) {
   });
 }
 
-module.exports = { getMask, getUpscale, generateImage, getAiBackground, ContentViolationError, withRetry, isEntitlementError };
+module.exports = { getMask, getUpscale, generateImage, getAiBackground, ContentViolationError, withRetry, isEntitlementError, cropToRatio };

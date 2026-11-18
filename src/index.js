@@ -65,17 +65,24 @@ async function takeCredit(ctx, chatId) {
 // Logs a feature failure with its stack and DMs the real error to the admin (once per 10 min per message),
 // because users only ever see the generic "Something went wrong".
 const lastErrorReport = new Map();
-function reportError(where, err) {
+let errorBurst = { start: 0, sent: 0 };
+function reportError(where, err, chatId) {
   // Node's fetch hides the real network reason (ECONNREFUSED, ETIMEDOUT, ...) in err.cause
   const cause = err && err.cause ? ` (${err.cause.code || err.cause.message || err.cause})` : '';
   const msg = `${where}: ${String((err && err.message) || err).replace(/\s+/g, ' ').slice(0, 300)}${String(cause).slice(0, 80)}`;
-  console.error(`[${where}]`, err && err.stack ? err.stack.split('\n').slice(0, 4).join(' | ') : msg);
+  console.error(`[${where}] user ${chatId}`, err && err.stack ? err.stack.split('\n').slice(0, 4).join(' | ') : msg);
   if (!config.ADMIN_CHAT_ID) return;
-  const key = msg.slice(0, 120), now = Date.now();
-  if (now - (lastErrorReport.get(key) || 0) < 10 * 60 * 1000) return;
-  if (lastErrorReport.size > 200) lastErrorReport.clear();
+  const now = Date.now();
+  // Every failure a user sees is sent to the admin. Only a user repeating the very same error within 30s is skipped,
+  // and a hard cap (30 DMs / 10 min) keeps an outage from flooding the chat.
+  const key = `${chatId}|${msg.slice(0, 100)}`;
+  if (now - (lastErrorReport.get(key) || 0) < 30000) return;
+  if (now - errorBurst.start > 10 * 60 * 1000) errorBurst = { start: now, sent: 0 };
+  if (errorBurst.sent >= 30) return;
+  errorBurst.sent++;
+  if (lastErrorReport.size > 500) lastErrorReport.clear();
   lastErrorReport.set(key, now);
-  bot.telegram.sendMessage(config.ADMIN_CHAT_ID, `⚠️ Feature failed — ${msg}`).catch(() => {});
+  bot.telegram.sendMessage(config.ADMIN_CHAT_ID, `⚠️ Feature failed — user ${chatId}\n${msg}\n(user was told: something went wrong, credit refunded)`).catch(() => {});
 }
 
 function refundCredit(chatId) {
@@ -570,7 +577,7 @@ async function processAiBackground(ctx, chatId, prompt) {
     await db.logImage(chatId, cached.imageBuffer.length, resultBuffer.length, 'ai_bg').catch(e => console.error('usage log failed:', e.message));
   } catch (err) {
     console.error('AI BG error:', err.message);
-    reportError('ai-background', err);
+    reportError('ai-background', err, chatId);
     await refundCredit(chatId);
     if (/failed: 429|entitlement|rate.limit/i.test(err.message || '')) {
       await ctx.telegram.sendMessage(chatId, '⚡ AI background credits are busy right now. Your credit was refunded — please try again in a minute.');
@@ -652,7 +659,7 @@ async function processGeneratedImage(ctx, chatId, action) {
   } catch (err) {
     console.error('=== ERROR ===');
     console.error('Message:', err.message);
-    reportError('bg-remove/upscale (generated image)', err);
+    reportError('bg-remove/upscale (generated image)', err, chatId);
     await refundCredit(chatId);
     await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Credit refunded.');
   } finally {
@@ -887,7 +894,7 @@ bot.on('text', async (ctx) => {
       voiceSession.delete(chatId);
     } catch (err) {
       console.error('voice err:', err.message);
-      reportError('voice', err);
+      reportError('voice', err, chatId);
       await refundCredit(chatId);
       voiceSession.delete(chatId);
       await ctx.reply('❌ Something went wrong. Credit refunded.');
@@ -952,7 +959,7 @@ async function processPhotoAsync(ctx, chatId, doUpscale, processingMsg) {
   } catch (err) {
     console.error('=== ERROR ===');
     console.error('Message:', err.message);
-    reportError('photo', err);
+    reportError('photo', err, chatId);
     await refundCredit(chatId);
     await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Credit refunded.');
   } finally {
@@ -993,7 +1000,7 @@ async function generateImageAsync(ctx, chatId, text, msg, size = 'SQUARE_HD') {
   } catch (err) {
     console.error('=== ERROR ===');
     console.error('Message:', err.message);
-    reportError('imagine', err);
+    reportError('imagine', err, chatId);
     // Content-filter rejections are the user's fault (no refund); everything else is on our side
     if (!(err instanceof ContentViolationError)) await refundCredit(chatId);
     if (err instanceof ContentViolationError) {
@@ -1026,7 +1033,7 @@ async function generateVideoAsync(ctx, chatId, text, msg) {
   } catch (err) {
     console.error('=== VIDEO ERROR ===');
     console.error('Message:', err.message);
-    reportError('video', err);
+    reportError('video', err, chatId);
     await refundCredit(chatId);
     await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Credit refunded.');
   } finally {
