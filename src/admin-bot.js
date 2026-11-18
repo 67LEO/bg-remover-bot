@@ -35,8 +35,8 @@ bot.start(async (ctx) => {
     '   🎤 AI Voice Gen — /voice (14 languages)\n' +
     '   🎬 AI Video Gen — /video your prompt\n' +
     '   🖼️ AI Background Replace — 🎨 AI BG after remove\n' +
-    '   📊 Referral: /share for unlimited free usage\n' +
-    '   💳 Premium: /premium (₹49/mo, ₹499/yr)\n\n' +
+    '   🎁 Credits: 10 free every day, +3 per ad, +3 per referral (/share)\n' +
+    '   🎬 /premium shows credits and the ad button\n\n' +
     '📋 *Admin Commands:*\n' +
     '   /tickets — Support threads (open/replied)\n' +
     '   /payments [page] — Pending payment orders with screenshot\n' +

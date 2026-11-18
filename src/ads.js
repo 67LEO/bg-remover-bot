@@ -1,5 +1,5 @@
 // AdsGram bot-ad client: https://docs.adsgram.ai/bots/block-integration
-const API_URL = process.env.ADSGRAM_API_URL || 'https://api.adsgram.ai/advbot';
+const apiUrl = () => process.env.ADSGRAM_API_URL || 'https://api.adsgram.ai/advbot';
 
 function isConfigured() {
   return !!(process.env.ADSGRAM_BLOCK_ID && process.env.ADSGRAM_TOKEN);
@@ -14,7 +14,7 @@ async function fetchAd(tgid, languageCode) {
     language: (languageCode || 'en').slice(0, 2).toLowerCase(),
     token: process.env.ADSGRAM_TOKEN,
   });
-  const res = await fetch(`${API_URL}?${qs}`);
+  const res = await fetch(`${apiUrl()}?${qs}`);
   if (!res.ok) {
     const body = (await res.text().catch(() => '')).slice(0, 120);
     // 4xx from AdsGram with no ad (no fill) is normal; auth/config problems are logged for the operator

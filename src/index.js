@@ -67,12 +67,22 @@ bot.action('earn_credits', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   const chatId = ctx.chat.id;
   try {
-    if (!ads.isConfigured()) {
+    // Mini App video ad (unskippable, pays per view) when its block is configured; otherwise the CPC bot ad
+    const appBlock = String(process.env.ADSGRAM_MINIAPP_BLOCK_ID || '').replace(/\D/g, '');
+    if (!appBlock && !ads.isConfigured()) {
       return await ctx.reply('🎬 Ads are not available right now. Your credits refill every day, or invite friends with /share!');
     }
     const { byUser } = await db.countAdRewardsToday(chatId, '');
     if (byUser >= adstate.AD_DAILY_LIMIT) {
       return await ctx.reply('✅ You have used all of today\'s ad rewards. They reset tomorrow — or invite friends with /share for more credits!');
+    }
+
+    if (appBlock) {
+      const botUsername = ctx.botInfo?.username || process.env.BOT_USERNAME || 'AiBgRemover_Bot';
+      return await ctx.reply(
+        `🎬 Watch a short video to the end and get +${adstate.AD_REWARD_CREDITS} credits.`,
+        Markup.inlineKeyboard([[Markup.button.url(`▶ Watch Video (+${adstate.AD_REWARD_CREDITS} credits)`, `https://t.me/${botUsername}/earn`)]])
+      );
     }
 
     const ad = await ads.fetchAd(chatId, ctx.from?.language_code);
@@ -645,7 +655,7 @@ bot.command('cancel', async (ctx) => {
     const order = pendingPayment.get(chatId);
     await db.cancelPaymentOrder(order.orderRef);
     pendingPayment.delete(chatId);
-    await ctx.reply('✅ Payment cancelled. Type /premium anytime to buy again.');
+    await ctx.reply('✅ Payment cancelled.');
     sendNotification(`❌ *Order Cancelled*\n\n👤 ${displayName}\n🔖 ${order.orderRef}\n💰 ${order.plan}`);
     return;
   }
@@ -653,7 +663,7 @@ bot.command('cancel', async (ctx) => {
   const dbOrder = await db.getUserPendingOrder(chatId);
   if (dbOrder) {
     await db.cancelPaymentOrder(dbOrder.order_ref);
-    await ctx.reply('✅ Payment cancelled. Type /premium anytime to buy again.');
+    await ctx.reply('✅ Payment cancelled.');
     sendNotification(`❌ *Order Cancelled*\n\n👤 ${displayName}\n🔖 ${dbOrder.order_ref}\n💰 ${dbOrder.plan}`);
     return;
   }

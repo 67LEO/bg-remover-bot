@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Earn Credits</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://sad.adsgram.ai/js/sad.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #0f172a; color: #f1f5f9; }
+  .card { width: 100%; max-width: 380px; padding: 28px 20px; text-align: center; }
+  .icon { font-size: 56px; line-height: 1; }
+  h1 { font-size: 22px; margin: 14px 0 6px; }
+  p { margin: 0 0 22px; color: #94a3b8; font-size: 15px; line-height: 1.45; }
+  button { width: 100%; padding: 15px; font-size: 17px; font-weight: 600; color: #fff; background: #4f46e5;
+           border: 0; border-radius: 12px; cursor: pointer; }
+  button:disabled { opacity: .55; cursor: default; }
+  #msg { margin-top: 18px; min-height: 22px; font-size: 15px; }
+  .ok { color: #4ade80; } .err { color: #f87171; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon" id="icon">🎬</div>
+  <h1>Earn free credits</h1>
+  <p>Watch a short video to the end and get <b>+3 credits</b>.<br>The video can't be skipped, so keep this screen open until it finishes.</p>
+  <button id="btn">▶ Watch video</button>
+  <div id="msg"></div>
+</div>
+<script>
+(function () {
+  var BLOCK_ID = '__BLOCK_ID__';
+  var DEBUG = __DEBUG__;
+  var tg = window.Telegram && window.Telegram.WebApp;
+  if (tg) { tg.ready(); tg.expand(); }
+  var initData = (tg && tg.initData) || '';
+  var btn = document.getElementById('btn');
+  var msg = document.getElementById('msg');
+  var icon = document.getElementById('icon');
+
+  function say(text, cls) { msg.textContent = text; msg.className = cls || ''; }
+
+  function post(path) {
+    return fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ initData: initData }) })
+      .then(function (r) { return r.json().catch(function () { return {}; }); });
+  }
+
+  function done(text, ok) {
+    icon.textContent = ok ? '✅' : '⚠️';
+    say(text, ok ? 'ok' : 'err');
+    btn.textContent = ok ? 'Done' : '▶ Try again';
+    btn.disabled = ok;
+    if (ok && tg) setTimeout(function () { tg.close(); }, 1800);
+  }
+
+  btn.addEventListener('click', function () {
+    if (!initData) return done('Please open this page from the bot in Telegram.', false);
+    if (!BLOCK_ID) return done('Ads are not set up yet. Please try again later.', false);
+    if (!window.Adsgram) return done('The ad could not load. Check your connection and try again.', false);
+
+    btn.disabled = true;
+    say('Loading video…');
+
+    post('/api/earn/start').then(function (s) {
+      if (!s.ok) { done(s.error || 'Could not start the video. Please try again.', false); return; }
+      var controller = window.Adsgram.init({ blockId: BLOCK_ID, debug: DEBUG });
+      // show() resolves only when the user watched the video to the end
+      return controller.show().then(function () {
+        say('Adding your credits…');
+        return post('/api/earn/claim').then(function (c) {
+          if (c.ok) done('+3 credits added! Go back to the bot.', true);
+          else done(c.error || 'Could not add credits. Please try again.', false);
+        });
+      }, function (result) {
+        var noAd = result && result.error && /no|fill|available/i.test(result.description || '');
+        done(noAd ? 'No video is available right now. Please try again in a minute.' : 'The video was not finished, so no credits were added.', false);
+      });
+    }).catch(function () {
+      done('Something went wrong. Please try again.', false);
+    });
+  });
+})();
+</script>
+</body>
+</html>

@@ -141,24 +141,102 @@ router.get('/adsgram/reward', async (req, res) => {
     }
 
     const { byUser } = await db.countAdRewardsToday(chatId, '');
-    if (byUser >= adstate.AD_DAILY_LIMIT) return reply(200, false, 'Daily ad reward limit reached. Come back tomorrow!', { limitReached: true });
+    const atLimit = byUser >= adstate.AD_DAILY_LIMIT;
 
-    if (!adstate.consumeIssued(chatId)) return reply(200, false, 'No active ad found. Tap "Watch Ad & Earn Credits" in the bot to get a new one.');
-    consumed = true;
-
-    await db.addCreditsBot(chatId, adstate.AD_REWARD_CREDITS);
-    await db.logAdReward({ user_type: 'bot', user_id: chatId, credits_given: adstate.AD_REWARD_CREDITS, ip_hash: 'adsgram', user_agent_hash: null });
-
-    // Best-effort DM so the user sees the credit in the chat
-    fetch(`https://api.telegram.org/bot${config.BOT_TOKEN}/sendMessage`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: `✅ +${adstate.AD_REWARD_CREDITS} credits added! Thanks for watching.` }),
-    }).catch(() => {});
-
-    reply(200, true, `+${adstate.AD_REWARD_CREDITS} credits added!`, { credits: adstate.AD_REWARD_CREDITS });
+    // A started ad pays out once: whichever of this callback / the Mini App page claim arrives first wins
+    if (!atLimit && adstate.consumeIssued(chatId)) {
+      consumed = true;
+      await grantAdReward(chatId, 'adsgram');
+      return reply(200, true, `+${adstate.AD_REWARD_CREDITS} credits added!`, { credits: adstate.AD_REWARD_CREDITS });
+    }
+    if (adstate.wasCredited(chatId, 30000)) return reply(200, true, 'Credits already added!'); // the page got there first
+    if (atLimit) return reply(200, false, 'Daily ad reward limit reached. Come back tomorrow!', { limitReached: true });
+    reply(200, false, 'No active ad found. Tap "Watch Ad & Earn Credits" in the bot to get a new one.');
   } catch {
     if (consumed) adstate.markIssued(chatId); // DB failed after using the ad up: let the user retry
     reply(500, false, 'Something went wrong. Please try the reward link again.');
+  }
+});
+
+// ---- Mini App video ad page (/earn) ----
+// Credits +AD_REWARD_CREDITS. One place, so the AdsGram callback and the Mini App claim behave identically.
+async function grantAdReward(chatId, source) {
+  await db.addCreditsBot(chatId, adstate.AD_REWARD_CREDITS);
+  await db.logAdReward({ user_type: 'bot', user_id: chatId, credits_given: adstate.AD_REWARD_CREDITS, ip_hash: source, user_agent_hash: null });
+  adstate.markCredited(chatId);
+  // Best-effort DM so the user sees the credit in the chat
+  fetch(`https://api.telegram.org/bot${config.BOT_TOKEN}/sendMessage`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text: `✅ +${adstate.AD_REWARD_CREDITS} credits added! Thanks for watching.` }),
+  }).catch(() => {});
+}
+
+// Validates Telegram Mini App initData (HMAC with the bot token) and returns the Telegram user id, or 0.
+// https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
+function userIdFromInitData(initData) {
+  try {
+    if (!initData || typeof initData !== 'string' || initData.length > 4096 || !config.BOT_TOKEN) return 0;
+    const params = new URLSearchParams(initData);
+    const hash = params.get('hash');
+    if (!hash) return 0;
+    params.delete('hash');
+    const check = [...params.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([k, v]) => `${k}=${v}`)
+      .join('\n');
+    const secret = crypto.createHmac('sha256', 'WebAppData').update(config.BOT_TOKEN).digest();
+    const calc = crypto.createHmac('sha256', secret).update(check).digest('hex');
+    const a = Buffer.from(calc), b = Buffer.from(hash);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return 0;
+    const authDate = parseInt(params.get('auth_date'));
+    if (!authDate || Date.now() / 1000 - authDate > 24 * 3600) return 0; // stale
+    const id = parseInt(JSON.parse(params.get('user') || '{}').id);
+    return id > 0 ? id : 0;
+  } catch {
+    return 0;
+  }
+}
+
+const AD_MIN_WATCH_MS = parseInt(process.env.AD_MIN_WATCH_MS || '8000'); // a real video can't finish sooner than this
+const LIMIT_REACHED_MSG = 'You have used all of today\'s ad rewards. They reset tomorrow!';
+
+router.post('/earn/start', async (req, res) => {
+  try {
+    const chatId = userIdFromInitData((req.body || {}).initData);
+    if (!chatId) return res.status(401).json({ ok: false, error: 'Please open this page from the bot in Telegram.' });
+    const { byUser } = await db.countAdRewardsToday(chatId, '');
+    if (byUser >= adstate.AD_DAILY_LIMIT) return res.status(429).json({ ok: false, limitReached: true, error: LIMIT_REACHED_MSG });
+    adstate.markIssued(chatId, 'app');
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ ok: false, error: 'Something went wrong. Please try again.' });
+  }
+});
+
+// Called by the page after the video finished. The AdsGram server callback (Reward URL) may credit first;
+// either way a started video pays out exactly once.
+router.post('/earn/claim', async (req, res) => {
+  let chatId = 0, claimed = false;
+  try {
+    chatId = userIdFromInitData((req.body || {}).initData);
+    if (!chatId) return res.status(401).json({ ok: false, error: 'Please open this page from the bot in Telegram.' });
+    const alreadyPaid = () => res.json({ ok: true, already: true, credits: adstate.AD_REWARD_CREDITS });
+    const credited = adstate.wasCredited(chatId); // e.g. the AdsGram callback paid this video a moment ago
+
+    const { byUser } = await db.countAdRewardsToday(chatId, '');
+    if (byUser >= adstate.AD_DAILY_LIMIT) return credited ? alreadyPaid() : res.status(429).json({ ok: false, limitReached: true, error: LIMIT_REACHED_MSG });
+
+    // A video that is still pending is judged on its own, even if the previous one was paid seconds ago
+    const state = adstate.claimApp(chatId, AD_MIN_WATCH_MS);
+    if (state === 'early') return res.status(400).json({ ok: false, error: 'Please watch the whole video to get your credits.' });
+    if (state === 'none') return credited ? alreadyPaid() : res.status(400).json({ ok: false, error: 'No video was started. Tap Watch again.' });
+    claimed = true;
+
+    await grantAdReward(chatId, 'miniapp');
+    res.json({ ok: true, credits: adstate.AD_REWARD_CREDITS });
+  } catch {
+    if (claimed) adstate.markIssued(chatId, 'app', Date.now() - 60000); // DB failed after using the video up: let the user retry
+    res.status(500).json({ ok: false, error: 'Something went wrong. Please try again.' });
   }
 });
 

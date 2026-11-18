@@ -58,6 +58,19 @@ app.get('/health', async (req, res) => {
   }
 });
 
+// Telegram Mini App page that plays the AdsGram video ad (opened from the bot's "Watch Ad" button)
+app.get('/earn', (req, res) => {
+  const blockId = String(process.env.ADSGRAM_MINIAPP_BLOCK_ID || '').replace(/\D/g, '');
+  const debug = process.env.ADSGRAM_MINIAPP_DEBUG === '1' ? 'true' : 'false'; // test platform: test ads, not counted
+  let html;
+  try {
+    html = require('fs').readFileSync(path.join(__dirname, 'earn.html'), 'utf8');
+  } catch {
+    return res.status(404).end('Not found');
+  }
+  res.set('Cache-Control', 'no-store').type('html').send(html.replace('__BLOCK_ID__', blockId).replace('__DEBUG__', debug));
+});
+
 const staticDir = path.join(__dirname, '..', 'website', 'dist');
 app.use(express.static(staticDir));
 app.get('/{*path}', (req, res) => {
