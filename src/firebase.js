@@ -62,7 +62,9 @@ async function ensureAuth() {
 // Rotate to the next usable account. If `exhausted` is true, the current
 // account hit an entitlement rate-limit and goes on cool-down (usable again
 // after COOLDOWN_MS) instead of being discarded permanently.
-async function rotateToken(exhausted = false) {
+// With `fresh: true` the next account is always brand new (never taken from the pool), for when pooled
+// accounts may share the same block.
+async function rotateToken(exhausted = false, { fresh = false } = {}) {
   if (currentEntry) {
     if (exhausted) {
       currentEntry.cooldownUntil = Date.now() + COOLDOWN_MS;
@@ -70,7 +72,7 @@ async function rotateToken(exhausted = false) {
       currentEntry.bad = true;
     }
   }
-  const entry = getNextFromPool();
+  const entry = fresh ? null : getNextFromPool();
   if (entry) {
     currentEntry = entry;
     console.log(`[auth] Rotated → ${entry.localId.slice(0, 8)}...`);

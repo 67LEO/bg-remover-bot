@@ -27,6 +27,12 @@ const MAX_ROTATIONS = 6;
 
 const apiSem = new Semaphore(5);
 
+// Photoroom's per-account limits: 429 "entitlement-rate-limited", or 403 "entitlement-blocked / requires Pro"
+function isEntitlementError(msg) {
+  return msg.includes('failed: 429') ||
+    (msg.includes('failed: 403') && /entitlement|upgrade to pro|requires pro/i.test(msg));
+}
+
 async function withRetry(fn) {
   await appStartup();
   const token = await ensureAuth();
@@ -35,16 +41,19 @@ async function withRetry(fn) {
   } catch (err) {
     if (err instanceof ContentViolationError) throw err;
     const msg = err.message || '';
-    const isEntitlement = msg.includes('failed: 429');
-    const retryable = isEntitlement || msg.includes('failed: 401') ||
+    const retryable = isEntitlementError(msg) || msg.includes('failed: 401') ||
                       msg.includes('failed: 403') || msg.includes('failed: 5');
     if (!retryable) throw err;
 
+    const isEntitlement = isEntitlementError(msg);
     const attempts = isEntitlement ? MAX_ROTATIONS : 1;
     let lastErr = err;
+    let lastMsg = msg;
     for (let i = 0; i < attempts; i++) {
-      console.warn(`[api] Token rotation (${i + 1}/${attempts})${isEntitlement ? ' [entitlement]' : ''}: ${msg.slice(0, 100)}`);
-      await rotateToken(isEntitlement);
+      console.warn(`[api] Token rotation (${i + 1}/${attempts})${isEntitlement ? ' [entitlement]' : ''}: ${lastMsg.slice(0, 100)}`);
+      // 429 = temporary rate limit (cool-down, reusable later); 403 entitlement = this account is blocked (discard).
+      // After the first rotation go straight to brand-new accounts: pooled ones may be blocked the same way.
+      await rotateToken(lastMsg.includes('failed: 429'), { fresh: isEntitlement && i > 0 });
       await appStartup();
       const freshToken = await ensureAuth();
       try {
@@ -52,9 +61,9 @@ async function withRetry(fn) {
       } catch (e) {
         if (e instanceof ContentViolationError) throw e;
         lastErr = e;
-        const m = e.message || '';
-        // keep rotating on entitlement 429; stop early on anything else
-        if (isEntitlement && m.includes('failed: 429')) continue;
+        lastMsg = e.message || '';
+        // keep rotating while the failure is an entitlement problem; stop early on anything else
+        if (isEntitlement && isEntitlementError(lastMsg)) continue;
         break;
       }
     }
@@ -272,4 +281,4 @@ async function getAiBackground(imageBuffer, maskBuffer, prompt) {
   });
 }
 
-module.exports = { getMask, getUpscale, generateImage, getAiBackground, ContentViolationError };
+module.exports = { getMask, getUpscale, generateImage, getAiBackground, ContentViolationError, withRetry, isEntitlementError };

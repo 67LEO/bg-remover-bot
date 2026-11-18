@@ -12,9 +12,12 @@ const adstate = require('./adstate');
 const fs = require('fs');
 
 const __origFetch = globalThis.fetch;
+// Most calls get 30s. AI endpoints reply only once the result is ready (upscale alone measured 11-50s), so a 30s
+// cut-off made them fail at random; give those 120s.
+const SLOW_API = /upscale|generate-images|generate-ai-background|aritek|elevenlabs/i;
 globalThis.fetch = (url, opts = {}) => {
   const ctrl = new AbortController();
-  const id = setTimeout(() => ctrl.abort(), 30000);
+  const id = setTimeout(() => ctrl.abort(), SLOW_API.test(String(url)) ? 120000 : 30000);
   const signal = opts.signal;
   if (signal) {
     signal.addEventListener('abort', () => ctrl.abort(), { once: true });
@@ -570,7 +573,7 @@ async function processAiBackground(ctx, chatId, prompt) {
     reportError('ai-background', err);
     await refundCredit(chatId);
     if (/failed: 429|entitlement|rate.limit/i.test(err.message || '')) {
-      await ctx.telegram.sendMessage(chatId, '⚡ AI background credits are temporarily exhausted on our side. Please try again in a few minutes — background removal & upscale still work!');
+      await ctx.telegram.sendMessage(chatId, '⚡ AI background credits are busy right now. Your credit was refunded — please try again in a minute.');
     } else {
       await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Please try again later.');
     }
@@ -996,7 +999,7 @@ async function generateImageAsync(ctx, chatId, text, msg, size = 'SQUARE_HD') {
     if (err instanceof ContentViolationError) {
       await ctx.telegram.sendMessage(chatId, '🚫 Your prompt was rejected by the AI content filter. Please try a different, family-friendly description.');
     } else if (/failed: 429|entitlement|rate.limit/i.test(err.message || '')) {
-      await ctx.telegram.sendMessage(chatId, '⚡ AI image credits are temporarily exhausted on our side. Please try again in a few minutes — background removal & upscale still work!');
+      await ctx.telegram.sendMessage(chatId, '⚡ AI image credits are busy right now. Your credit was refunded — please try again in a minute.');
     } else {
       await ctx.telegram.sendMessage(chatId, '❌ Something went wrong. Credit refunded.');
     }
