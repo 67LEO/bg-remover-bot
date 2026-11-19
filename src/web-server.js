@@ -60,15 +60,25 @@ app.get('/health', async (req, res) => {
 
 // Telegram Mini App page that plays the AdsGram video ad (opened from the bot's "Watch Ad" button)
 app.get('/earn', (req, res) => {
-  const blockId = String(process.env.ADSGRAM_MINIAPP_BLOCK_ID || '').replace(/\D/g, '');
-  const debug = process.env.ADSGRAM_MINIAPP_DEBUG === '1' ? 'true' : 'false'; // test platform: test ads, not counted
+  const adsgramBlock = String(process.env.ADSGRAM_MINIAPP_BLOCK_ID || '').replace(/\D/g, '');
+  const monetagZone = String(process.env.MONETAG_ZONE_ID || '').replace(/\D/g, '');
+  // Networks that are set up, tried in this order (AD_PROVIDERS can reorder or limit them, e.g. "adsgram,monetag")
+  const providers = String(process.env.AD_PROVIDERS || 'monetag,adsgram').split(',').map(s => s.trim())
+    .filter((p, i, a) => a.indexOf(p) === i && ((p === 'monetag' && monetagZone) || (p === 'adsgram' && adsgramBlock)));
+  const cfg = JSON.stringify({
+    providers, monetagZone, adsgramBlock,
+    debug: process.env.ADSGRAM_MINIAPP_DEBUG === '1', // AdsGram test platform: test ads, not counted
+  }).replace(/</g, '\\u003c');
+  // Monetag wants exactly one SDK tag on the page
+  const monetagTag = monetagZone && providers.includes('monetag')
+    ? `<script src='//libtl.com/sdk.js' data-zone='${monetagZone}' data-sdk='show_${monetagZone}'></script>` : '';
   let html;
   try {
     html = require('fs').readFileSync(path.join(__dirname, 'earn.html'), 'utf8');
   } catch {
     return res.status(404).end('Not found');
   }
-  res.set('Cache-Control', 'no-store').type('html').send(html.replace('__BLOCK_ID__', blockId).replace('__DEBUG__', debug));
+  res.set('Cache-Control', 'no-store').type('html').send(html.replace('__CFG__', () => cfg).replace('__MONETAG_TAG__', () => monetagTag));
 });
 
 const staticDir = path.join(__dirname, '..', 'website', 'dist');

@@ -198,6 +198,8 @@ function userIdFromInitData(initData) {
 }
 
 const AD_MIN_WATCH_MS = parseInt(process.env.AD_MIN_WATCH_MS || '8000'); // a real video can't finish sooner than this
+const MONETAG_POSTBACK_SECRET = process.env.MONETAG_POSTBACK_SECRET || ''; // set -> Monetag claims need its server confirmation
+const MONETAG_WAIT_MS = parseInt(process.env.MONETAG_POSTBACK_WAIT_MS || '6000'); // how long a claim waits for that postback
 const LIMIT_REACHED_MSG = 'You have used all of today\'s ad rewards. They reset tomorrow!';
 
 router.post('/earn/start', async (req, res) => {
@@ -206,6 +208,12 @@ router.post('/earn/start', async (req, res) => {
     if (!chatId) return res.status(401).json({ ok: false, error: 'Please open this page from the bot in Telegram.' });
     const { byUser } = await db.countAdRewardsToday(chatId, '');
     if (byUser >= adstate.AD_DAILY_LIMIT) return res.status(429).json({ ok: false, limitReached: true, error: LIMIT_REACHED_MSG });
+    if ((req.body || {}).provider === 'monetag') {
+      // Monetag needs a ymid that is unique per ad show (letters/digits/-/_/. only); it comes back in the postback
+      const ymid = `m${chatId}_${crypto.randomBytes(6).toString('hex')}`;
+      adstate.markIssued(chatId, 'app', Date.now(), ymid);
+      return res.json({ ok: true, ymid });
+    }
     adstate.markIssued(chatId, 'app');
     res.json({ ok: true });
   } catch {
@@ -226,18 +234,48 @@ router.post('/earn/claim', async (req, res) => {
     const { byUser } = await db.countAdRewardsToday(chatId, '');
     if (byUser >= adstate.AD_DAILY_LIMIT) return credited ? alreadyPaid() : res.status(429).json({ ok: false, limitReached: true, error: LIMIT_REACHED_MSG });
 
+    const body = req.body || {};
+    const isMonetag = body.provider === 'monetag';
+    const ymid = isMonetag ? String(body.ymid || '') : null;
+    if (isMonetag) {
+      // the ymid must be one this very user was given by /earn/start
+      if (!new RegExp(`^m${chatId}_[0-9a-f]{12}$`).test(ymid)) return res.status(400).json({ ok: false, error: 'Please tap Watch again.' });
+      // With the postback secret configured, credit only for an ad Monetag itself confirmed (server-to-server) as paid
+      if (MONETAG_POSTBACK_SECRET) {
+        const pb = await adstate.waitPostback(ymid, MONETAG_WAIT_MS);
+        if (!pb) return res.status(400).json({ ok: false, error: 'We could not confirm the video yet. Please try again.' });
+        if (pb.telegramId && pb.telegramId !== String(chatId)) return res.status(400).json({ ok: false, error: 'Please tap Watch again.' });
+        if (!pb.valued) { adstate.dropPostback(ymid); return res.json({ ok: false, noReward: true, error: 'No reward for this video this time. Please try again.' }); }
+      }
+    }
+
     // A video that is still pending is judged on its own, even if the previous one was paid seconds ago
-    const state = adstate.claimApp(chatId, AD_MIN_WATCH_MS);
+    const state = adstate.claimApp(chatId, AD_MIN_WATCH_MS, ymid);
     if (state === 'early') return res.status(400).json({ ok: false, error: 'Please watch the whole video to get your credits.' });
     if (state === 'none') return credited ? alreadyPaid() : res.status(400).json({ ok: false, error: 'No video was started. Tap Watch again.' });
     claimed = true;
 
-    await grantAdReward(chatId, 'miniapp');
+    await grantAdReward(chatId, isMonetag ? 'monetag' : 'miniapp');
+    if (ymid) adstate.dropPostback(ymid);
     res.json({ ok: true, credits: adstate.AD_REWARD_CREDITS });
   } catch {
-    if (claimed) adstate.markIssued(chatId, 'app', Date.now() - 60000); // DB failed after using the video up: let the user retry
+    if (claimed) adstate.markIssued(chatId, 'app', Date.now() - 60000, (req.body || {}).provider === 'monetag' ? String((req.body || {}).ymid || '') : null); // DB failed after using the video up: let the user retry
     res.status(500).json({ ok: false, error: 'Something went wrong. Please try again.' });
   }
+});
+
+// Monetag server-to-server postback. Set this as the Postback URL of the SDK zone in the Monetag dashboard:
+//   https://<your-domain>/api/monetag/postback?secret=<MONETAG_POSTBACK_SECRET>&ymid={ymid}&zone_id={zone_id}&event_type={event_type}&reward_event_type={reward_event_type}&telegram_id={telegram_id}&estimated_price={estimated_price}
+// The URL is stored at Monetag and never reaches the app, so a request with the right secret came from Monetag.
+router.get('/monetag/postback', (req, res) => {
+  if (!MONETAG_POSTBACK_SECRET) return res.sendStatus(503);
+  const a = Buffer.from(String(req.query.secret || '')), b = Buffer.from(MONETAG_POSTBACK_SECRET);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.sendStatus(403);
+  const ymid = String(req.query.ymid || '');
+  if (/^m\d+_[0-9a-f]{12}$/.test(ymid)) { // ours; anything else (e.g. an ad shown without a ymid) is just acknowledged
+    adstate.recordPostback(ymid, { valued: req.query.reward_event_type === 'valued', telegramId: String(req.query.telegram_id || '') });
+  }
+  res.sendStatus(200);
 });
 
 router.post('/auth/signup', async (req, res) => {

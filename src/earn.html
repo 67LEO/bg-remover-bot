@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Earn Credits</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+__MONETAG_TAG__
 <script src="https://sad.adsgram.ai/js/sad.min.js"></script>
 <style>
   :root { color-scheme: dark; }
@@ -26,16 +27,16 @@
 <div class="card">
   <div class="icon" id="icon">🎬</div>
   <h1>Earn free credits</h1>
-  <p>Watch a short video to the end and get <b>+3 credits</b>.<br>The video can't be skipped, so keep this screen open until it finishes.</p>
+  <p>Watch a short video to the end and get <b>+3 credits</b>.<br>Keep this screen open until it finishes.</p>
   <button id="btn">▶ Watch video</button>
   <div id="msg"></div>
 </div>
 <script>
 (function () {
-  var BLOCK_ID = '__BLOCK_ID__';
-  var DEBUG = __DEBUG__;
+  // Injected by the server: which ad networks are set up, in the order they are tried.
+  var CFG = __CFG__;
   var tg = window.Telegram && window.Telegram.WebApp;
-  if (tg) { tg.ready(); tg.expand(); }
+  if (tg) { tg.ready(); tg.expand(); } // ready() lets the Monetag SDK see the Telegram user
   var initData = (tg && tg.initData) || '';
   var btn = document.getElementById('btn');
   var msg = document.getElementById('msg');
@@ -43,8 +44,10 @@
 
   function say(text, cls) { msg.textContent = text; msg.className = cls || ''; }
 
-  function post(path) {
-    return fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ initData: initData }) })
+  function post(path, extra) {
+    var body = { initData: initData };
+    for (var k in extra) body[k] = extra[k];
+    return fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
       .then(function (r) { return r.json().catch(function () { return {}; }); });
   }
 
@@ -56,31 +59,94 @@
     if (ok && tg) setTimeout(function () { tg.close(); }, 1800);
   }
 
-  btn.addEventListener('click', function () {
-    if (!initData) return done('Please open this page from the bot in Telegram.', false);
-    if (!BLOCK_ID) return done('Ads are not set up yet. Please try again later.', false);
-    if (!window.Adsgram) return done('The ad could not load. Check your connection and try again.', false);
+  function handleClaim(c) {
+    if (c && c.ok) done('+3 credits added! Go back to the bot.', true);
+    else done((c && c.error) || 'Could not add credits. Please try again.', false);
+  }
 
-    btn.disabled = true;
-    say('Loading video…');
+  // ---- Monetag (Rewarded Interstitial). The reward is only claimed for a paid ("valued") view. ----
+  var monetagOK = !!CFG.monetagZone;
+  var prepared = null;    // { ymid } of a Monetag ad that is already started and preloaded
+  var preparing = null;   // the promise for that, while it is in flight
 
-    post('/api/earn/start').then(function (s) {
-      if (!s.ok) { done(s.error || 'Could not start the video. Please try again.', false); return; }
-      var controller = window.Adsgram.init({ blockId: BLOCK_ID, debug: DEBUG });
+  function monetagShow() { return window['show_' + CFG.monetagZone]; }
+  function monetagAvailable() { return monetagOK && typeof monetagShow() === 'function'; }
+
+  // Starting early + preloading (with the SAME ymid as the later show) avoids a visible delay.
+  function prepareMonetag() {
+    if (!monetagAvailable() || !initData) return Promise.resolve(null);
+    preparing = post('/api/earn/start', { provider: 'monetag' }).then(function (s) {
+      if (!s.ok) return { error: s };
+      return monetagShow()({ type: 'preload', ymid: s.ymid }).then(
+        function () { return { ymid: s.ymid }; },
+        function () { monetagOK = false; return null; } // no ad to preload: use the next network
+      );
+    }).then(function (p) { prepared = p && p.ymid ? p : null; preparing = null; return p; },
+            function () { preparing = null; return null; });
+    return preparing;
+  }
+
+  function viaMonetag() {
+    var ready = preparing ? preparing : Promise.resolve(prepared);
+    return ready.then(function (p) {
+      if (p && p.error) return p;
+      if (p && p.ymid) return p;
+      return post('/api/earn/start', { provider: 'monetag' }).then(function (s) { return s.ok ? { ymid: s.ymid } : { error: s }; });
+    }).then(function (p) {
+      prepared = null;
+      if (p.error) { done(p.error.error || 'Could not start the video. Please try again.', false); return 'done'; }
+      say('Loading video…');
+      return monetagShow()({ ymid: p.ymid, requestVar: 'earn' }).then(function (result) {
+        // The promise also resolves when the ad is closed early, so only a paid view counts
+        if (!result || result.reward_event_type !== 'valued') { done('No reward for this video this time. Please try again.', false); return 'done'; }
+        say('Adding your credits…');
+        return post('/api/earn/claim', { provider: 'monetag', ymid: p.ymid }).then(function (c) { handleClaim(c); return 'done'; });
+      }, function () { return 'next'; }); // ad failed / nothing to show: try the next network
+    });
+  }
+
+  // ---- AdsGram (Reward) ----
+  function adsgramAvailable() { return !!CFG.adsgramBlock && !!window.Adsgram; }
+
+  function viaAdsgram() {
+    return post('/api/earn/start', {}).then(function (s) {
+      if (!s.ok) { done(s.error || 'Could not start the video. Please try again.', false); return 'done'; }
+      var controller = window.Adsgram.init({ blockId: CFG.adsgramBlock, debug: !!CFG.debug });
       // show() resolves only when the user watched the video to the end
       return controller.show().then(function () {
         say('Adding your credits…');
-        return post('/api/earn/claim').then(function (c) {
-          if (c.ok) done('+3 credits added! Go back to the bot.', true);
-          else done(c.error || 'Could not add credits. Please try again.', false);
-        });
+        return post('/api/earn/claim', {}).then(function (c) { handleClaim(c); return 'done'; });
       }, function (result) {
         var noAd = result && result.error && /no|fill|available/i.test(result.description || '');
-        done(noAd ? 'No video is available right now. Please try again in a minute.' : 'The video was not finished, so no credits were added.', false);
+        if (noAd) return 'next';
+        done('The video was not finished, so no credits were added.', false);
+        return 'done';
       });
-    }).catch(function () {
-      done('Something went wrong. Please try again.', false);
     });
+  }
+
+  function run() {
+    var order = CFG.providers.filter(function (p) { return p === 'monetag' ? monetagAvailable() : adsgramAvailable(); });
+    function next(i) {
+      var p = order[i];
+      if (!p) { done('No video is available right now. Please try again in a minute.', false); return Promise.resolve(); }
+      return (p === 'monetag' ? viaMonetag() : viaAdsgram()).then(function (r) { if (r === 'next') return next(i + 1); });
+    }
+    return next(0);
+  }
+
+  btn.addEventListener('click', function () {
+    if (!initData) return done('Please open this page from the bot in Telegram.', false);
+    if (!CFG.providers.length) return done('Ads are not set up yet. Please try again later.', false);
+    btn.disabled = true;
+    say('Loading video…');
+    run().catch(function () { done('Something went wrong. Please try again.', false); })
+      .then(function () { if (!btn.disabled) prepareMonetag(); }); // not finished successfully: get the next ad ready
+  });
+
+  // Get a Monetag ad ready as soon as the page opens
+  prepareMonetag().then(function (p) {
+    if (p && p.error && p.error.limitReached) done(p.error.error, false);
   });
 })();
 </script>

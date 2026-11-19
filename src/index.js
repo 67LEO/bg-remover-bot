@@ -102,7 +102,8 @@ bot.action('earn_credits', async (ctx) => {
   const chatId = ctx.chat.id;
   try {
     // Mini App video ad (unskippable, pays per view) when its block is configured; otherwise the CPC bot ad
-    const appBlock = String(process.env.ADSGRAM_MINIAPP_BLOCK_ID || '').replace(/\D/g, '');
+    const appBlock = String(process.env.ADSGRAM_MINIAPP_BLOCK_ID || '').replace(/\D/g, '') ||
+      String(process.env.MONETAG_ZONE_ID || '').replace(/\D/g, ''); // either network makes the Mini App video available
     if (!appBlock && !ads.isConfigured()) {
       return await ctx.reply('🎬 Ads are not available right now. Your credits refill every day, or invite friends with /share!');
     }
